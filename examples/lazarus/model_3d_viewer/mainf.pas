@@ -112,6 +112,8 @@ uses LCLType, LCLIntf, CastleVectors, CastleBoxes, X3DNodes, CastleRenderer,
   CastleApplicationProperties,
   OpenGLInformation, CastleLCLUtils, ConsoleF, CastleImages, CastleSoundEngine;
 
+{$R *.lfm}
+
 procedure TMain.OpenScene(const URL: string);
 
   procedure LoadScene(const URL: String);
@@ -247,7 +249,7 @@ procedure TMain.MenuMouseLookToggleClick(Sender: TObject);
 var
   Walk: TCastleWalkNavigation;
 begin
-  Walk := Viewport.WalkCamera(false);
+  Walk := Viewport.WalkNavigation(false);
   if Walk <> nil then
   begin
     Walk.MouseLook := (Sender as TMenuItem).Checked;
@@ -278,7 +280,7 @@ procedure TMain.UpdateCrosshairImage;
 var
   Walk: TCastleWalkNavigation;
 begin
-  Walk := Viewport.WalkCamera(false);
+  Walk := Viewport.WalkNavigation(false);
 
   CrosshairCtl.Exists := ((Walk <> nil) and Walk.MouseLook);
 
@@ -422,6 +424,4 @@ begin
   end;
 end;
 
-initialization
-  {$I mainf.lrs}
 end.

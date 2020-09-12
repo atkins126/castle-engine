@@ -1,5 +1,5 @@
 {
-  Copyright 2009-2019 Michalis Kamburelis.
+  Copyright 2009-2020 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -147,9 +147,12 @@ type
 
       FOnBoundViewpointChanged, FOnBoundNavigationInfoChanged: TNotifyEvent;
       FMouseRayHit: TRayCollision;
+      MouseRayOrigin, MouseRayDirection: TVector3;
       FAvoidNavigationCollisions: TCastleTransform;
       PrepareResourcesDone: Boolean;
       FPreventInfiniteFallingDown: Boolean;
+      FCapturePointingDevice: TCastleTransform;
+      FCapturePointingDeviceObserver: TFreeNotificationObserver;
 
     function FillsWholeContainer: boolean;
     function IsStoredNavigation: Boolean;
@@ -191,6 +194,27 @@ type
       or when Navigation uses MouseLook (in which case, returns the middle of our area,
       the actual mouse position should not be even visible to the user). }
     function GetMousePosition(out MousePosition: TVector2): Boolean;
+
+    procedure SetCapturePointingDevice(const AValue: TCastleTransform);
+    { Once a TCastleTransform will handle a PointingDevicePress event,
+      we make sure to pass subsequent PointingDeviceMove and PointingDeviceRelease to it too,
+      before other TCastleTransform instances,
+      and regardless if ray hits this TCastleTransform still.
+      This way TCastleTransform can handle e.g. dragging with mouse/touch,
+      regardless if mouse/touch stays over this transform.
+
+      The reason and implementation of this mechanism is similar to
+      TUIContainer.FCaptureInput. }
+    property CapturePointingDevice: TCastleTransform
+      read FCapturePointingDevice write SetCapturePointingDevice;
+    procedure CapturePointingDeviceFreeNotification(const Sender: TFreeNotificationObserver);
+
+    { Initialize TRayCollisionNode to specify collision with given TCastleTransform
+      without any specific Triangle/Point.
+      The given RayOrigin / RayOrigin are in world coordinates
+      (internally we will convert them to TCastleTransform coordinates). }
+    function FakeRayCollisionNode(const RayOriginWorld, RayDirectionWorld: TVector3;
+      const Item: TCastleTransform): TRayCollisionNode;
   private
     var
       FNavigation: TCastleNavigation;
@@ -232,11 +256,23 @@ type
       Looks at MainScene.InternalMainLightForShadows. }
     function MainLightForShadows(out AMainLightPosition: TVector4): boolean;
 
-    { Pass pointing device (mouse) activation/deactivation event to 3D world. }
-    function PointingDeviceActivate(const Active: boolean): boolean;
+    { Pass pointing device (mouse or touch) press event
+      to TCastleTransform instances in @link(Items).
+      Depends that MouseRayHit, MouseRayOrigin, MouseRayDirection are already updated. }
+    function PointingDevicePress: boolean;
 
-    { Pass pointing device (mouse) move event to 3D world. }
-    function PointingDeviceMove(const RayOrigin, RayDirection: TVector3): boolean;
+    { Pass pointing device (mouse or touch) press event
+      to TCastleTransform instances in @link(Items).
+      Depends that MouseRayHit, MouseRayOrigin, MouseRayDirection are already updated. }
+    function PointingDeviceRelease: boolean;
+
+    { Pass pointing device (mouse or touch) move event
+      to TCastleTransform instances in @link(Items).
+      Depends that MouseRayHit, MouseRayOrigin, MouseRayDirection are already updated. }
+    function PointingDeviceMove: boolean;
+
+    { Update MouseRayHit. }
+    procedure UpdateMouseRayHit;
   protected
     { Calculate projection parameters. Determines if the view is perspective
       or orthogonal and exact field of view parameters.
@@ -301,17 +337,10 @@ type
     function InternalExtraScreenEffectsCount: Integer; override;
     function InternalExtraScreenEffectsNeedDepth: Boolean; override;
 
-    { Called when PointingDeviceActivate was not handled by any 3D object.
+    { Called when PointingDevicePress was not handled by any TCastleTransform object.
       You can override this to make a message / sound signal to notify user
       that his Input_Interact click was not successful. }
-    procedure PointingDeviceActivateFailed(const Active: boolean); virtual;
-
-    { Handle pointing device (mouse) activation/deactivation event over a given 3D
-      object. See TCastleTransform.PointingDeviceActivate method for description how it
-      should be handled. Default implementation in TCastleViewport
-      just calls TCastleTransform.PointingDeviceActivate. }
-    function PointingDeviceActivate3D(const Item: TCastleTransform; const Active: boolean;
-      const Distance: Single): boolean; virtual;
+    procedure PointingDevicePressFailed; virtual;
 
     procedure BoundNavigationInfoChanged; virtual;
     procedure BoundViewpointChanged; virtual;
@@ -357,11 +386,6 @@ type
     procedure BeforeRender; override;
 
     function GetMainScene: TCastleScene; deprecated 'use Items.MainScene';
-
-    { Update MouseHitRay and update Items (TCastleTransform hierarchy) knowledge
-      about the current pointing device.
-      You usually don't need to call this, as it is done at every mouse move. }
-    procedure UpdateMouseRayHit;
 
     { Current projection parameters,
       calculated by last @link(CalculateProjection) call,
@@ -986,24 +1010,24 @@ type
       read FUseGlobalFog write FUseGlobalFog default DefaultUseGlobalFog;
 
     { Help user to activate pointing device sensors and pick items.
-      Every time you press or release Input_Interact (by default
-      just left mouse button), we look if current mouse position hits 3D object
-      that actually does something on activation. The objects may do various stuff
-      inside TCastleTransform.PointingDeviceActivate, generally this causes various
+      Every time you press Input_Interact (by default
+      just left mouse button), we look if current mouse/touch position hits an object (TCastleTransform)
+      that actually does something on activation. The object may do various stuff
+      inside TCastleTransform.PointingDevicePress, generally this causes various
       picking/interaction with the object (like pulling a level, opening a door),
       possibly dragging, possibly with the help of VRML/X3D pointing device
       and drag sensors.
 
       When this is @true, we try harder to hit some 3D object that handles
-      PointingDeviceActivate. If there's nothing interesting under mouse,
-      we will retry a couple of other positions arount the current mouse.
+      PointingDevicePress. If there's nothing interesting under mouse/touch,
+      we will retry a couple of other positions around the current mouse/touch.
 
       This should be usually used when you use TCastleMouseLookNavigation.MouseLook,
       or other navigation when mouse cursor is hidden.
       It allows user to only approximately look at interesting item and hit
       interaction button or key.
-      Otherwise, activating a small 3D object is difficult,
-      as you don't see the mouse cursor. }
+      Otherwise, activating a small object is difficult,
+      as you don't see the cursor. }
     property ApproximateActivation: boolean
       read FApproximateActivation write FApproximateActivation default false;
 
@@ -1089,9 +1113,8 @@ type
       This is a nice thing for general model viewers (like view3dscene),
       to prevent from accidentally falling down when using "Walk" mode.
 
-      This is only used by navigations performing gravity,
-      like @link(TCastleWalkNavigation) (when @link(TCastleWalkNavigation.Gravity) = @true)
-      or @link(TCastleThirdPersonNavigation) (when @link(TCastleThirdPersonNavigation.Gravity) = @true). }
+      This is only used by navigations performing gravity internally,
+      that is right now: @link(TCastleWalkNavigation) (when @link(TCastleWalkNavigation.Gravity) = @true). }
     property PreventInfiniteFallingDown: Boolean
       read FPreventInfiniteFallingDown write FPreventInfiniteFallingDown default false;
 
@@ -1303,6 +1326,9 @@ begin
   FItems.OnVisibleChange := @ItemsVisibleChange;
   FItems.MainCamera := Camera;
 
+  FCapturePointingDeviceObserver := TFreeNotificationObserver.Create(Self);
+  FCapturePointingDeviceObserver.OnFreeNotification := @CapturePointingDeviceFreeNotification;
+
   {$define read_implementation_constructor}
   {$I auto_generated_persistent_vectors/tcastleviewport_persistent_vectors.inc}
   {$undef read_implementation_constructor}
@@ -1347,6 +1373,21 @@ begin
   inherited;
 end;
 
+procedure TCastleViewport.SetCapturePointingDevice(const AValue: TCastleTransform);
+begin
+  if FCapturePointingDevice <> AValue then
+  begin
+    FCapturePointingDevice := AValue;
+    FCapturePointingDeviceObserver.Observed := AValue;
+  end;
+end;
+
+procedure TCastleViewport.CapturePointingDeviceFreeNotification(
+  const Sender: TFreeNotificationObserver);
+begin
+  CapturePointingDevice := nil;
+end;
+
 function TCastleViewport.FillsWholeContainer: boolean;
 begin
   if Container = nil then
@@ -1365,11 +1406,11 @@ begin
     or after the scene manager / viewport on the Controls list (as there's really
     no perfect ordering for them).
 
-    TODO: In the future it should be possible to assign
-    the same Navigation instance to multiple viewports.
-    For now, it doesn't work (last viewport will hijack some
-    navigation events, and set Navigation.Viewport,
-    making it not working in other viewports). }
+    Note that one Navigation instance can be assigned only to one TCastleViewport.
+    Not only the viewport "takes over" some navigation events,
+    and sets Navigation.Viewport,
+    but also Navigation (as any other TCastleUserInterface) cannot be present
+    multiple times in UI hierarchy. }
 
   if FNavigation <> Value then
   begin
@@ -1449,21 +1490,20 @@ begin
   Result := inherited;
   if Result or Items.Paused then Exit;
 
-  { Update MouseHitRay and update Items (TCastleTransform hierarchy) knowledge
-    about the current pointing device.
-    Otherwise the 1st mouse down event over a 3D object (like a TouchSensor)
-    will be ignored
-    if it happens before any mouse move (which is normal on touch devices). }
+  { Make MouseRayHit valid, as our PointingDevicePress uses it.
+    Also this makes MouseRayHit valid during TCastleTransform.PointingDevicePress calls.
+    Although implementors should rather use information passed
+    as TCastleTransform.PointingDevicePress argument, not look at Viewport.MouseRayHit. }
   UpdateMouseRayHit;
 
-  LastPressEvent := TInputPressRelease(Event);
+  LastPressEvent := Event;
 
   if (Items <> nil) and
      Items.Press(Event) then
     Exit(ExclusiveEvents);
 
   if Input_Interact.IsEvent(Event) and
-     PointingDeviceActivate(true) then
+     PointingDevicePress then
     Exit(ExclusiveEvents);
 end;
 
@@ -1472,16 +1512,32 @@ begin
   Result := inherited;
   if Result or Items.Paused then Exit;
 
+  { Make MouseRayHit valid, as our PointingDeviceRelease uses it. }
+  UpdateMouseRayHit;
+
   if (Items <> nil) and
      Items.Release(Event) then
     Exit(ExclusiveEvents);
 
   if Input_Interact.IsEvent(Event) and
-     PointingDeviceActivate(false) then
+     PointingDeviceRelease then
     Exit(ExclusiveEvents);
 end;
 
 function TCastleViewport.Motion(const Event: TInputMotion): boolean;
+
+  { Call Transform.PointingDeviceRelease with CancelAction = true. }
+  procedure PointingDeviceCancel(const Transform: TCastleTransform);
+  var
+    RayOrigin, RayDirection: TVector3;
+    MousePosition: TVector2;
+  begin
+    if GetMousePosition(MousePosition) then
+    begin
+      PositionToRay(MousePosition, true, RayOrigin, RayDirection);
+      Transform.PointingDeviceRelease(FakeRayCollisionNode(RayOrigin, RayDirection, Transform), MaxSingle, true { CancelAction });
+    end;
+  end;
 
   function IsTouchSensorActiveInScene(const Scene: TCastleTransform): boolean;
   var
@@ -1502,23 +1558,23 @@ function TCastleViewport.Motion(const Event: TInputMotion): boolean;
 const
   DistanceToHijackDragging = 5 * 96;
 var
-  TopMostScene: TCastleTransform;
+  TopMostTransform: TCastleTransform;
 begin
   Result := inherited;
   if (not Result) and (not Items.Paused) then
   begin
     if Navigation <> nil then
     begin
-      TopMostScene := TransformUnderMouse;
+      TopMostTransform := TransformUnderMouse;
 
       { Test if dragging TTouchSensorNode. In that case cancel its dragging
         and let navigation move instead. }
-      if (TopMostScene <> nil) and
-         IsTouchSensorActiveInScene(TopMostScene) and
+      if (TopMostTransform <> nil) and
+         IsTouchSensorActiveInScene(TopMostTransform) and
          (PointsDistance(LastPressEvent.Position, Event.Position) >
           DistanceToHijackDragging / Container.Dpi) then
       begin
-        TopMostScene.PointingDeviceActivate(false, 0, true);
+        PointingDeviceCancel(TopMostTransform);
 
         if EnableParentDragging then
         begin
@@ -1531,16 +1587,13 @@ begin
       end;
     end;
 
-    { Do PointingDeviceMove, which updates MouseRayHit, even when Navigation.Motion
-      is true. On Windows 10 with MouseLook, Navigation.Motion is always true. }
-    //if not Result then
     UpdateMouseRayHit;
 
-    { Note: UpdateMouseRayHit above calls PointingDeviceMove and ignores
-      PointingDeviceMove result.
+    { Note: we ignore PointingDeviceMove result.
       Maybe we should use PointingDeviceMove result as our Motion result?
       Answer unknown. Historically we do not do this, and I found no practical
       use-case when it would be useful to do this. }
+    PointingDeviceMove;
   end;
 
   { update the cursor, since 3D object under the cursor possibly changed.
@@ -1559,13 +1612,16 @@ end;
 
 procedure TCastleViewport.UpdateMouseRayHit;
 var
-  RayOrigin, RayDirection: TVector3;
   MousePosition: TVector2;
 begin
   if GetMousePosition(MousePosition) then
   begin
-    PositionToRay(MousePosition, true, RayOrigin, RayDirection);
-    PointingDeviceMove(RayOrigin, RayDirection);
+    PositionToRay(MousePosition, true, MouseRayOrigin, MouseRayDirection);
+
+    { Update MouseRayHit.
+      We know that MouseRayDirection is normalized now, which is important
+      to get correct MouseRayHit.Distance. }
+    SetMouseRayHit(CameraRayCollision(MouseRayOrigin, MouseRayDirection));
   end;
 end;
 
@@ -3026,59 +3082,86 @@ begin
   end;
 end;
 
-function TCastleViewport.PointingDeviceActivate(const Active: boolean): boolean;
+function TCastleViewport.FakeRayCollisionNode(const RayOriginWorld, RayDirectionWorld: TVector3;
+  const Item: TCastleTransform): TRayCollisionNode;
+var
+  RayOrigin, RayDirection: TVector3;
+begin
+  if Item.HasWorldTransform then
+  begin
+    RayOrigin := Item.WorldToLocal(RayOriginWorld);
+    RayDirection := Item.WorldToLocalDirection(RayDirectionWorld);
+  end else
+  begin
+    WritelnWarning('TODO: Item %s is not part of World, or is present in World multiple times. PointingDeviceXxx events will receive ray in world coordinates, while they should be in local.');
+    RayOrigin := RayOriginWorld;
+    RayDirection := RayDirectionWorld;
+  end;
 
-  { Try PointingDeviceActivate on 3D stuff hit by RayHit }
-  function TryActivate(RayHit: TRayCollision): boolean;
+  { sets Triangle and Point (and any potential future fields) to zero }
+  FillChar(Result, SizeOf(Result), #0);
+  Result.Item := Item;
+  Result.RayOrigin := RayOrigin;
+  Result.RayDirection := RayDirection;
+end;
+
+function TCastleViewport.PointingDevicePress: Boolean;
+
+  { Pass pointing device (mouse or touch) press event
+    to TCastleTransform instances in @link(Items) hit by RayHit. }
+  function PointingDevicePressCore(const RayHit: TRayCollision; const RayOrigin, RayDirection: TVector3): boolean;
+
+    function CallPress(const Pick: TRayCollisionNode; const Distance: Single): Boolean;
+    begin
+      if not Pick.Item.GetExists then // prevent calling Pick.Item.PointingDeviceXxx when item GetExists=false
+        Result := false
+      else
+        Result := Pick.Item.PointingDevicePress(Pick, Distance);
+    end;
+
   var
-    PassToMainScene: boolean;
+    Distance: Single;
     I: Integer;
   begin
-    { call TCastleTransform.PointingDeviceActivate on everything, calculate Result }
     Result := false;
-    PassToMainScene := true;
 
+    if RayHit <> nil then
+      Distance := RayHit.Distance
+    else
+      Distance := MaxSingle;
+
+    // call TCastleTransform.PointingDevicePress on all items on RayHit
     if RayHit <> nil then
       for I := 0 to RayHit.Count - 1 do
       begin
-        if RayHit[I].Item = Items.MainScene then
-          PassToMainScene := false;
-        Result := PointingDeviceActivate3D(RayHit[I].Item, Active, RayHit.Distance);
+        Result := CallPress(RayHit[I], Distance);
         if Result then
         begin
-          PassToMainScene := false;
-          Break;
+          { This check avoids assigning to CapturePointingDevice something
+            that is no longer part of our Items after it handled PointingDevicePress. }
+          if RayHit[I].Item.World = Items then
+            CapturePointingDevice := RayHit[I].Item;
+          Exit;
         end;
       end;
-
-    if PassToMainScene and (Items.MainScene <> nil) then
-      Result := PointingDeviceActivate3D(Items.MainScene, Active, MaxSingle);
   end;
 
 var
   MousePosition: TVector2;
 
-  { Try PointingDeviceActivate on 3D stuff hit by ray moved by given number
-    of screen pixels from current mouse position.
-    Call only if MousePosition already assigned. }
+  { Try PointingDevicePressCore on stuff hit by ray,
+    with ray moved by given number of screen pixels from current mouse position.
+    Call only if MousePosition is already assigned. }
   function TryActivateAround(const Change: TVector2): boolean;
   var
     RayOrigin, RayDirection: TVector3;
     RayHit: TRayCollision;
   begin
     PositionToRay(MousePosition + Change, true, RayOrigin, RayDirection);
-
     RayHit := CameraRayCollision(RayOrigin, RayDirection);
-
-    { We do not really have to check "RayHit <> nil" below,
-      as TryActivate can (and should) work even with RayHit=nil case.
-      However, we know that TryActivate will not do anything new if RayHit=nil
-      (it will just pass this to MainScene, which was already done before
-      trying ApproximateActivation). }
-
-    Result := (RayHit <> nil) and TryActivate(RayHit);
-
-    FreeAndNil(RayHit);
+    try
+      Result := PointingDevicePressCore(RayHit, RayOrigin, RayDirection);
+    finally FreeAndNil(RayHit) end;
   end;
 
   function TryActivateAroundSquare(const Change: Single): boolean;
@@ -3094,7 +3177,8 @@ var
   end;
 
 begin
-  Result := TryActivate(MouseRayHit);
+  Result := PointingDevicePressCore(MouseRayHit, MouseRayOrigin, MouseRayDirection);
+
   if not Result then
   begin
     if ApproximateActivation and GetMousePosition(MousePosition) then
@@ -3105,65 +3189,127 @@ begin
   end;
 
   if not Result then
-    PointingDeviceActivateFailed(Active);
+    PointingDevicePressFailed;
 end;
 
-function TCastleViewport.PointingDeviceActivate3D(const Item: TCastleTransform;
-  const Active: boolean; const Distance: Single): boolean;
+procedure TCastleViewport.PointingDevicePressFailed;
 begin
-  Result := Item.PointingDeviceActivate(Active, Distance);
+  SoundEngine.Sound(stPlayerInteractFailed);
 end;
 
-procedure TCastleViewport.PointingDeviceActivateFailed(const Active: boolean);
-begin
-  if Active then
-    SoundEngine.Sound(stPlayerInteractFailed);
-end;
+function TCastleViewport.PointingDeviceRelease: Boolean;
 
-function TCastleViewport.PointingDeviceMove(
-  const RayOrigin, RayDirection: TVector3): boolean;
-var
-  PassToMainScene: boolean;
-  I: Integer;
-  MainSceneNode: TRayCollisionNode;
-begin
-  { update MouseRayHit.
-    We know that RayDirection is normalized now, which is important
-    to get correct MouseRayHit.Distance. }
-  SetMouseRayHit(CameraRayCollision(RayOrigin, RayDirection));
+  { Pass pointing device (mouse or touch) release event
+    to TCastleTransform instances in @link(Items) hit by RayHit. }
+  function PointingDeviceReleaseCore(const RayHit: TRayCollision; const RayOrigin, RayDirection: TVector3): boolean;
 
-  { call TCastleTransform.PointingDeviceMove on everything, calculate Result }
-  Result := false;
-  PassToMainScene := true;
-
-  if MouseRayHit <> nil then
-    for I := 0 to MouseRayHit.Count - 1 do
+    function CallRelease(const Pick: TRayCollisionNode; const Distance: Single): Boolean;
     begin
-      if MouseRayHit[I].Item = Items.MainScene then
-        PassToMainScene := false;
-      Result := MouseRayHit[I].Item.PointingDeviceMove(MouseRayHit[I], MouseRayHit.Distance);
-      if Result then
-      begin
-        PassToMainScene := false;
-        Break;
-      end;
+      if not Pick.Item.GetExists then // prevent calling Pick.Item.PointingDeviceXxx when item GetExists=false
+        Result := false
+      else
+        Result := Pick.Item.PointingDeviceRelease(Pick, Distance, false);
     end;
 
-  if PassToMainScene and (Items.MainScene <> nil) then
+  var
+    Distance: Single;
+    NodeIndex, I: Integer;
   begin
-    MainSceneNode.Item := Items.MainScene;
-    { if ray hit something, then the outermost 3D object should just be our Items,
-      and it contains the 3D point picked.
-      This isn't actually used by anything now --- TRayCollisionNode.Point
-      is for now used only by TCastleSceneCore, and only when Triangle <> nil. }
-    if MouseRayHit <> nil then
-      MainSceneNode.Point := MouseRayHit.Last.Point else
-      MainSceneNode.Point := TVector3.Zero;
-    MainSceneNode.RayOrigin := RayOrigin;
-    MainSceneNode.RayDirection := RayDirection;
-    MainSceneNode.Triangle := nil;
-    Result := Items.MainScene.PointingDeviceMove(MainSceneNode, MaxSingle);
+    Result := false;
+
+    if RayHit <> nil then
+      Distance := RayHit.Distance
+    else
+      Distance := MaxSingle;
+
+    if CapturePointingDevice <> nil then
+    begin
+      // call CapturePointingDevice.PointingDeviceRelease
+      if RayHit <> nil then
+        NodeIndex := RayHit.IndexOfItem(CapturePointingDevice)
+      else
+        NodeIndex := -1;
+      if NodeIndex <> -1 then
+        Result := CallRelease(RayHit[NodeIndex], Distance)
+      else
+        Result := CallRelease(FakeRayCollisionNode(RayOrigin, RayDirection, CapturePointingDevice), Distance);
+      CapturePointingDevice := nil; // no longer capturing, after release
+      if Result then Exit;
+    end;
+
+    // call TCastleTransform.PointingDeviceRelease on remaining items on RayHit
+    if RayHit <> nil then
+      for I := 0 to RayHit.Count - 1 do
+        if (CapturePointingDevice = nil) or
+           (CapturePointingDevice <> RayHit[I].Item) then
+        begin
+          Result := CallRelease(RayHit[I], Distance);
+          if Result then Exit;
+        end;
   end;
+
+begin
+  Result := PointingDeviceReleaseCore(MouseRayHit, MouseRayOrigin, MouseRayDirection);
+end;
+
+function TCastleViewport.PointingDeviceMove: boolean;
+
+  { Pass pointing device (mouse or touch) move event
+    to TCastleTransform instances in @link(Items) hit by RayHit. }
+  function PointingDeviceMoveCore(const RayHit: TRayCollision; const RayOrigin, RayDirection: TVector3): boolean;
+
+    function CallMove(const Pick: TRayCollisionNode; const Distance: Single): Boolean;
+    begin
+      if not Pick.Item.GetExists then // prevent calling Pick.Item.PointingDeviceXxx when item GetExists=false
+        Result := false
+      else
+        Result := Pick.Item.PointingDeviceMove(Pick, Distance);
+    end;
+
+  var
+    Distance: Single;
+    I, NodeIndex: Integer;
+  begin
+    Result := false;
+
+    if RayHit <> nil then
+      Distance := RayHit.Distance
+    else
+      Distance := MaxSingle;
+
+    if CapturePointingDevice <> nil then
+    begin
+      // call CapturePointingDevice.PointingDeviceMove
+      if RayHit <> nil then
+        NodeIndex := RayHit.IndexOfItem(CapturePointingDevice)
+      else
+        NodeIndex := -1;
+      if NodeIndex <> -1 then
+        Result := CallMove(RayHit[NodeIndex], Distance)
+      else
+        Result := CallMove(FakeRayCollisionNode(RayOrigin, RayDirection, CapturePointingDevice), Distance);
+      if Result then Exit;
+    end;
+
+    // call TCastleTransform.PointingDeviceMove on remaining items on RayHit
+    if RayHit <> nil then
+      for I := 0 to RayHit.Count - 1 do
+        if (CapturePointingDevice = nil) or
+           (CapturePointingDevice <> RayHit[I].Item) then
+        begin
+          Result := CallMove(RayHit[I], Distance);
+          if Result then Exit;
+        end;
+
+    // call MainScene.PointingDeviceMove, to allow to update X3D sensors "isOver"
+    if (Items.MainScene <> nil) and
+       (CapturePointingDevice <> Items.MainScene) and
+       ((RayHit = nil) or (RayHit.IndexOfItem(Items.MainScene) = -1)) then
+      CallMove(FakeRayCollisionNode(RayOrigin, RayDirection, Items.MainScene), Distance);
+  end;
+
+begin
+  Result := PointingDeviceMoveCore(MouseRayHit, MouseRayOrigin, MouseRayDirection);
 end;
 
 procedure TCastleViewport.VisibleChange(const Changes: TCastleUserInterfaceChanges;

@@ -36,7 +36,7 @@ type
     break the download immediately, if it's still in-progress.
 
     The download continues while your application is running,
-    because we use @link(ApplicationProperties.OnUpdate TCastleApplicationProperties.OnUpdate)
+    because we use @link(TCastleApplicationProperties.OnUpdate ApplicationProperties.OnUpdate)
     mechanism. If your application uses TCastleWindowBase or TCastleControlBase,
     then this just works.
     Note that if you just want to wait for download to finish,
@@ -136,7 +136,7 @@ type
       E.g. when HTTP server returns an error,
       like 404, it also still sends the response contents.
 
-      This stream is owned by default (if ContentOwned) by this TCastleDownload instance,
+      This stream is owned by default (if @link(OwnsContents)) by this TCastleDownload instance,
       so it will become invalid when the TCastleDownload instance is freed. }
     property Contents: TStream read FContents;
 
