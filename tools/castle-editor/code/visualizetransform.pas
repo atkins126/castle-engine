@@ -20,7 +20,7 @@ interface
 
 uses Classes, SysUtils, CastleColors, CastleVectors,
   CastleVectorsInternalSingle, CastleTransform, CastleDebugTransform,
-  CastleScene, CastleCameras;
+  CastleScene, CastleCameras, CastleTriangles;
 
 type
   TVisualizeOperation = (voSelect, voTranslate, voRotate, voScale);
@@ -31,16 +31,24 @@ type
     type
       TGizmoScene = class(TCastleScene)
       strict private
+        {.$define DEBUG_GIZMO_PICK}
+        {$ifdef DEBUG_GIZMO_PICK}
+        VisualizePick: TCastleScene;
+        {$endif DEBUG_GIZMO_PICK}
         GizmoDragging: Boolean;
         DraggingAxis: Integer;
         LastPick: TVector3;
-        { Point on axis closest to given pick. }
+        { Point on axis closest to given pick.
+          Axis may be -1 to indicate we drag on all axes with the same amount. }
         function PointOnAxis(out Intersection: TVector3;
           const Pick: TRayCollisionNode; const Axis: Integer): Boolean;
       protected
         procedure ChangeWorld(const Value: TCastleAbstractRootTransform); override;
+        function LocalRayCollision(const RayOrigin, RayDirection: TVector3;
+          const TrianglesToIgnoreFunc: TTriangleIgnoreFunc): TRayCollision; override;
       public
         Operation: TVisualizeOperation;
+        constructor Create(AOwner: TComponent); override;
         procedure CameraChanged(const ACamera: TCastleCamera); override;
         function Dragging: boolean; override;
         function PointingDevicePress(const Pick: TRayCollisionNode;
@@ -49,6 +57,7 @@ type
           const Distance: Single): Boolean; override;
         function PointingDeviceRelease(const Pick: TRayCollisionNode;
           const Distance: Single; const CancelAction: Boolean): Boolean; override;
+        procedure LocalRender(const Params: TRenderParams); override;
       end;
 
     var
@@ -79,7 +88,7 @@ implementation
 uses Math,
   ProjectUtils,
   CastleLog, CastleShapes, CastleViewport, CastleProjection, CastleUtils,
-  CastleQuaternions;
+  CastleQuaternions, X3DNodes, CastleGLUtils;
 
 { TVisualizeTransform.TGizmoScene -------------------------------------------- }
 
@@ -102,10 +111,46 @@ begin
 end;
 *)
 
+var
+  IntersectionScalar: Single;
 begin
-  Result := PointOnLineClosestToLine(Intersection,
-    TVector3.Zero, TVector3.One[Axis],
-    Pick.RayOrigin, Pick.RayDirection);
+  if Axis = -1 then
+  begin
+    (*
+    Result := Pick.Triangle <> nil; // otherwise Pick.Point undefined
+    if Result then
+    begin
+      Intersection := Pick.Point;
+      IntersectionScalar := Approximate3DScale(Intersection);
+      Intersection := Vector3(IntersectionScalar, IntersectionScalar, IntersectionScalar);
+    end;
+    *)
+
+    Result := true;
+    IntersectionScalar := Sqrt(PointToLineDistanceSqr(TVector3.Zero, Pick.RayOrigin, Pick.RayDirection));
+    Intersection := Vector3(IntersectionScalar, IntersectionScalar, IntersectionScalar);
+  end else
+  begin
+    Result := PointOnLineClosestToLine(Intersection,
+      TVector3.Zero, TVector3.One[Axis],
+      Pick.RayOrigin, Pick.RayDirection);
+
+    {$ifdef DEBUG_GIZMO_PICK}
+    VisualizePick.Exists := Result;
+    if Result then
+    begin
+      // Intersection is in UniqueParent coordinate space, i.e. ignores our gizmo scale
+      VisualizePick.Translation := OutsideToLocal(Intersection);
+      WritelnLog('VisualizePick with %s', [Intersection.ToString]);
+      WritelnLog('Line 1: %s %s, line 2 %s %s', [
+        TVector3.Zero.ToString,
+        TVector3.One[Axis].ToString,
+        Pick.RayOrigin.ToString,
+        Pick.RayDirection.ToString
+      ]);
+    end;
+    {$endif DEBUG_GIZMO_PICK}
+  end;
 end;
 
 procedure TVisualizeTransform.TGizmoScene.ChangeWorld(
@@ -119,6 +164,51 @@ begin
     if Value <> nil then
       CameraChanged(Value.MainCamera);
   end;
+end;
+
+function TVisualizeTransform.TGizmoScene.LocalRayCollision(
+  const RayOrigin, RayDirection: TVector3;
+  const TrianglesToIgnoreFunc: TTriangleIgnoreFunc): TRayCollision;
+begin
+  Result := inherited;
+  { Hack to make picking of the gizmo work even when gizmo is obscured
+    by other TCastleTransform (including bbox of UniqueParent, which is what
+    we actually want to transform).
+    Hacking Distance to be smallest possible means that it "wins"
+    when TCastleTransform.LocalRayCollision desides which collision
+    is first along the ray. }
+  if Result <> nil then
+    Result.Distance := 0;
+end;
+
+constructor TVisualizeTransform.TGizmoScene.Create(AOwner: TComponent);
+{$ifdef DEBUG_GIZMO_PICK}
+var
+  SphereGeometry: TSphereNode;
+  SphereShape: TShapeNode;
+  SphereMat: TMaterialNode;
+  SphereRoot: TX3DRootNode;
+{$endif DEBUG_GIZMO_PICK}
+begin
+  inherited Create(AOwner);
+
+  {$ifdef DEBUG_GIZMO_PICK}
+  VisualizePick := TCastleScene.Create(Self);
+
+  SphereGeometry := TSphereNode.CreateWithShape(SphereShape);
+  SphereGeometry.Radius := 0.1;
+
+  SphereMat := TMaterialNode.Create;
+  SphereMat.DiffuseColor := RedRGB;
+  SphereShape.Material := SphereMat;
+
+  SphereRoot := TX3DRootNode.Create;
+  SphereRoot.AddChildren(SphereShape);
+
+  VisualizePick.Load(SphereRoot, true);
+  VisualizePick.Exists := false;
+  Add(VisualizePick);
+  {$endif DEBUG_GIZMO_PICK}
 end;
 
 procedure TVisualizeTransform.TGizmoScene.CameraChanged(
@@ -197,6 +287,7 @@ begin
       'MaterialX': DraggingAxis := 0;
       'MaterialY': DraggingAxis := 1;
       'MaterialZ': DraggingAxis := 2;
+      'MaterialCenter': DraggingAxis := -1;
       else Exit;
     end;
 
@@ -205,7 +296,6 @@ begin
       GizmoDragging := true;
       // keep tracking pointing device events, by TCastleViewport.CapturePointingDevice mechanism
       Result := true;
-      WritelnLog('Gizmo dragging axis %d', [DraggingAxis]);
     end;
   end;
 end;
@@ -214,6 +304,7 @@ function TVisualizeTransform.TGizmoScene.PointingDeviceMove(
   const Pick: TRayCollisionNode; const Distance: Single): Boolean;
 var
   NewPick, Diff: TVector3;
+  I: Integer;
 begin
   Result := inherited;
   if Result then Exit;
@@ -222,23 +313,36 @@ begin
   begin
     if PointOnAxis(NewPick, Pick, DraggingAxis) then
     begin
-      Diff := NewPick - LastPick;
+      {$ifndef DEBUG_GIZMO_PICK}
       case Operation of
         voTranslate:
-          UniqueParent.Translation := UniqueParent.Translation + Diff;
+          begin
+            Diff := NewPick - LastPick;
+            UniqueParent.Translation := UniqueParent.Translation + Diff;
+          end;
+
         // TODO: rotate/scale are dummy tests
         //voRotate:
         //  UniqueParent.Rotation := (
         //    QuatFromAxisAngle(UniqueParent.Rotation) *
         //    QuatFromAxisAngle(TVector3.One[DraggingAxis], Diff.Length)).
         //    ToAxisAngle;
-        //voScale:
-        //  UniqueParent.Scale := UniqueParent.Scale + Diff;
+
+        voScale:
+          begin
+            for I := 0 to 2 do
+              if IsZero(LastPick[I]) then
+                Diff[I] := 1
+              else
+                Diff[I] := NewPick[I] / LastPick[I];
+            UniqueParent.Scale := UniqueParent.Scale * Diff;
+          end;
       end;
+      {$endif not DEBUG_GIZMO_PICK}
+
       { No point in updating LastPick: it remains the same, as it is expressed
         in local coordinate system, which we just changed by changing
         UniqueParent.Translation. }
-      WritelnLog('Gizmo: Moving pointing device, gizmo works!');
 
       // update our gizmo size, as we moved ourselves
       CameraChanged(World.MainCamera);
@@ -254,7 +358,25 @@ begin
   if Result then Exit;
 
   GizmoDragging := false;
-  WritelnLog('Gizmo: Released pointing device');
+end;
+
+procedure TVisualizeTransform.TGizmoScene.LocalRender(const Params: TRenderParams);
+const
+  RenderOnTop = true;
+begin
+  { We show gizmo on top, to be easily always visible.
+    This makes sense because it is also interactable even when obscured.
+
+    This simple approach to "render on top" has same drawbacks
+    as TPlayer.LocalRender. }
+
+  if RenderOnTop and (Params.RenderingCamera.Target <> rtShadowMap) then
+    RenderContext.DepthRange := drNear;
+
+  inherited;
+
+  if RenderOnTop and (Params.RenderingCamera.Target <> rtShadowMap) then
+    RenderContext.DepthRange := drFar;
 end;
 
 { TVisualizeTransform ------------------------------------------------------ }
@@ -286,13 +408,13 @@ begin
 
   // Gizmo[voSelect] remains nil
   Gizmo[voTranslate] := CreateGizmoScene;
-  Gizmo[voTranslate].Load(EditorApplicationData + 'translate_final.x3dv');
+  Gizmo[voTranslate].Load(EditorApplicationData + 'gizmos/translate_final.x3dv');
   Gizmo[voTranslate].Operation := voTranslate;
   Gizmo[voRotate] := CreateGizmoScene;
-  Gizmo[voRotate].Load(EditorApplicationData + 'rotate.glb');
+  Gizmo[voRotate].Load(EditorApplicationData + 'gizmos/rotate_final.x3dv');
   Gizmo[voRotate].Operation := voRotate;
   Gizmo[voScale] := CreateGizmoScene;
-  Gizmo[voScale].Load(EditorApplicationData + 'scale.glb');
+  Gizmo[voScale].Load(EditorApplicationData + 'gizmos/scale_final.x3dv');
   Gizmo[voScale].Operation := voScale;
 end;
 

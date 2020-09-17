@@ -1,5 +1,5 @@
 {
-  Copyright 2003-2018 Michalis Kamburelis.
+  Copyright 2003-2020 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -418,11 +418,15 @@ function TryPlaneSegmentDirIntersection(out Intersection: TVector3; out T: Singl
 function IsPointOnSegmentLineWithinSegment(const intersection, pos1, pos2: TVector2): boolean; overload;
 function IsPointOnSegmentLineWithinSegment(const intersection, pos1, pos2: TVector3): boolean; overload;
 
-{ Line passing through two @italic(different) points.
-  When the points are equal, undefined.
-  @groupBegin }
-function LineOfTwoDifferentPoints2d(const p1, p2: TVector2): TVector3; overload;
-{ @groupEnd }
+{ Coefficients of the 2D line equation (Ax + By + C = 0),
+  given 2 @italic(different) points lying on the line.
+  When the points are equal, this is undefined. }
+function Line2DFrom2Points(const p1, p2: TVector2): TVector3;
+
+{ Coefficients of the 2D line equation (Ax + By + C = 0),
+  given 1 point lying on the line, and non-zero line direction.
+  When LineVector is zero, this is undefined. }
+function Line2DFromOriginVector(const Line0, LineVector: TVector2): TVector3;
 
 function PointToSegmentDistanceSqr(const point, pos1, pos2: TVector3): Single; overload;
 
@@ -1796,27 +1800,30 @@ begin
             ((pos1.Data[c] >= intersection.Data[c]) and (intersection.Data[c] >= pos2.Data[c]));
 end;
 
-function LineOfTwoDifferentPoints2d(const p1, p2: TVector2): TVector3;
-var
-  lineVector: TVector2;
-  cGood, cOther: integer;
+function Line2DFrom2Points(const P1, P2: TVector2): TVector3;
 begin
-  (* chcemy zeby Vector2f(Result) i p2-p1(=lineVector) byly prostopadle czyli ich
-     iloczyn skalarny = 0 czyli Result.Data[0]*lineVector.Data[0] +
-     Result.Data[1]*lineVector.Data[1] = 0. Niech cGood to wspolrzedna
-     lineVector rozna od 0, cOther to ta druga.
-     Niech Result.Data[cOther] = -1 i zobaczmy ze wtedy mozemy skonstruowac
-     Result.Data[cGood] = lineVector.Data[cOther] / lineVector.Data[cGood]. *)
-  lineVector := p2 - p1;
-  if Abs(lineVector.Data[0]) > Abs(lineVector.Data[1]) then
-    begin cGood := 0; cOther := 1 end else
-    begin cOther := 0; cGood := 1 end;
-  Result.Data[cOther] := -1;
-  Result.Data[cGood] := lineVector.Data[cOther] / lineVector.Data[cGood];
+  Result := Line2DFromOriginVector(P1, P2 - P1);
+end;
 
-  (* Result.Data[0]*p1.Data[0] + Result.Data[1]*p1.Data[1] + Result.Data[2] = 0 wiec widac jak obliczyc
-     teraz Result.Data[2] *)
-  Result.Data[2] := -Result.Data[0]*p1.Data[0] -Result.Data[1]*p1.Data[1];
+function Line2DFromOriginVector(const Line0, LineVector: TVector2): TVector3;
+var
+  AxisGood, AxisOther: Integer;
+begin
+  { Set AxisGood to LineVector coordinate that is definitely non-zero,
+    let AxisOther be the other one. }
+  AxisGood := MaxAbsVectorCoord(LineVector);
+  AxisOther := 1 - AxisGood;
+
+  { We want to make Result.XY and LineVector orthogonal (this is how 2D line equation Ax+By+C works).
+
+    So their dot product = 0.
+
+    Let Result.Data[AxisOther] = -1 and then we can construct
+    Result.Data[AxisGood] = LineVector.Data[AxisOther] / LineVector.Data[AxisGood].
+  }
+  Result.Data[AxisOther] := -1;
+  Result.Data[AxisGood] := LineVector.Data[AxisOther] / LineVector.Data[AxisGood];
+  Result.Data[2] := - (Result.Data[0] * Line0.Data[0] + Result.Data[1] * Line0.Data[1]);
 end;
 
 function IsSpheresCollision(const Sphere1Center: TVector3; const Sphere1Radius: Single;
@@ -2020,8 +2027,10 @@ function PointOnLineClosestToLine(
 var
   Line0, LineVector, Ray0, RayVector: TVector3;
   N: TVector3;
-  Dist, Alpha, Beta, LineF: Single;
-  NonZeroRay, Ax1, Ax2, Ax: Integer;
+  {Dist, }LineF: Single;
+  Ax: Integer;
+  ProjectAxisX, ProjectAxisY: TVector3;
+  ProjectedIntersection, ProjectLine0, ProjectLineVector, ProjectRay0, ProjectRayVector: TVector2;
 begin
   Line0 := Line1Origin;
   LineVector := Line1Vector;
@@ -2037,43 +2046,41 @@ begin
   if N.IsZero then
     Exit(false); // ray parallel to axis, no sensible answer
 
-  N.NormalizeMe;
+  // N.NormalizeMe; // it is not necessary to normalize for anything below
 
-  Dist := TVector3.DotProduct(N, Line0 - Ray0){ / N.Length};
+  // Dist := TVector3.DotProduct(N, Line0 - Ray0){ / N.Length}; // not needed in this approach
 
-  { We know that:
-    Line0 + LineVector * LineF + N * Dist = Ray0 + RayVector * RayF .
+  { Project our 2 lines on 2D }
+  ProjectAxisX := AnyOrthogonalVector(N);
+  ProjectAxisY := TVector3.CrossProduct(N, ProjectAxisX);
 
-    We don't know LineF, RayF (scalars).
-    But we have now 3 equations that define relationship between them,
-    since above has both sides as 3D vectors. }
+  ProjectLine0 := Vector2(
+    TVector3.DotProduct(ProjectAxisX, Line0),
+    TVector3.DotProduct(ProjectAxisY, Line0)
+  );
+  ProjectLineVector := Vector2(
+    TVector3.DotProduct(ProjectAxisX, LineVector),
+    TVector3.DotProduct(ProjectAxisY, LineVector)
+  );
+  ProjectRay0 := Vector2(
+    TVector3.DotProduct(ProjectAxisX, Ray0),
+    TVector3.DotProduct(ProjectAxisY, Ray0)
+  );
+  ProjectRayVector := Vector2(
+    TVector3.DotProduct(ProjectAxisX, RayVector),
+    TVector3.DotProduct(ProjectAxisY, RayVector)
+  );
 
-  // Find an axis where RayVector <> 0
-  NonZeroRay := MaxAbsVectorCoord(RayVector);
-  Assert(not IsZero(RayVector[NonZeroRay])); // this would mean that RayVector is zero
+  ProjectedIntersection := Lines2DIntersection(
+    Line2DFromOriginVector(ProjectLine0, ProjectLineVector),
+    Line2DFromOriginVector(ProjectRay0, ProjectRayVector)
+  );
 
-  // On axis NonZeroRay, we can calculate Alpha, Beta such that:
-  // RayF = LineF * Alpha + Beta
-  Alpha := LineVector[NonZeroRay] / RayVector[NonZeroRay];
-  Beta := (Line0[NonZeroRay] + N[NonZeroRay] * Dist - Ray0[NonZeroRay]) / RayVector[NonZeroRay];
-
-  // Find an axis where (LineVector[*] - RayVector[*] * Alpha) <> 0
-  // We know it's not NonZeroRay due to how Alpha was calculated.
-  RestOf3dCoords(NonZeroRay, Ax1, Ax2);
-
-  if not IsZero(LineVector[Ax1] - RayVector[Ax1] * Alpha) then
-    Ax := Ax1
-  else
-  if not IsZero(LineVector[Ax2] - RayVector[Ax2] * Alpha) then
-    Ax := Ax2
-  else
-    Exit(false); // math says that any LineF would then satisfy the equation
-
-  LineF := (Beta + Ray0[Ax] - N[Ax] * Dist - Line0[Ax]) /
-           (LineVector[Ax] - RayVector[Ax] * Alpha);
+  Ax := MaxAbsVectorCoord(ProjectLineVector); // choose non-zero coordinate
+  LineF := (ProjectedIntersection[Ax] - ProjectLine0[Ax]) / ProjectLineVector[Ax];
 
   Result := true;
-  Intersection := Line0 + LineVector * LineF;
+  Intersection := Line0 + LineF * LineVector;
 end;
 
 { matrix transforms for 3D graphics  ----------------------------------------- }

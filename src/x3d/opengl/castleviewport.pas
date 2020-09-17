@@ -253,7 +253,8 @@ type
     procedure RenderShadowVolume;
 
     { Detect position/direction of the main light that produces shadows.
-      Looks at MainScene.InternalMainLightForShadows. }
+      Looks at MainScene.InternalMainLightForShadows.
+      Returns light position (or direction, if W = 0) in world space. }
     function MainLightForShadows(out AMainLightPosition: TVector4): boolean;
 
     { Pass pointing device (mouse or touch) press event
@@ -2020,8 +2021,18 @@ end;
 function TCastleViewport.MainLightForShadows(out AMainLightPosition: TVector4): boolean;
 begin
   if Items.MainScene <> nil then
-    Result := Items.MainScene.InternalMainLightForShadows(AMainLightPosition)
-  else
+  begin
+    Result := Items.MainScene.InternalMainLightForShadows(AMainLightPosition);
+    { Transform AMainLightPosition to world space.
+      This matters in case MainScene (that contains shadow-casting light) has some transformation. }
+    if Result then
+    begin
+      if AMainLightPosition.W = 0 then
+        AMainLightPosition.XYZ := Items.MainScene.LocalToWorldDirection(AMainLightPosition.XYZ)
+      else
+        AMainLightPosition.XYZ := Items.MainScene.LocalToWorld(AMainLightPosition.XYZ);
+    end;
+  end else
     Result := false;
 end;
 
@@ -3087,10 +3098,12 @@ function TCastleViewport.FakeRayCollisionNode(const RayOriginWorld, RayDirection
 var
   RayOrigin, RayDirection: TVector3;
 begin
-  if Item.HasWorldTransform then
+  if Item.HasWorldTransform and
+     (Item.UniqueParent <> nil) and
+     Item.UniqueParent.HasWorldTransform then
   begin
-    RayOrigin := Item.WorldToLocal(RayOriginWorld);
-    RayDirection := Item.WorldToLocalDirection(RayDirectionWorld);
+    RayOrigin := Item.UniqueParent.WorldToLocal(RayOriginWorld);
+    RayDirection := Item.UniqueParent.WorldToLocalDirection(RayDirectionWorld);
   end else
   begin
     WritelnWarning('TODO: Item %s is not part of World, or is present in World multiple times. PointingDeviceXxx events will receive ray in world coordinates, while they should be in local.');
