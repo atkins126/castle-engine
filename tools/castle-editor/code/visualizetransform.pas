@@ -36,18 +36,34 @@ type
         VisualizePick: TCastleScene;
         {$endif DEBUG_GIZMO_PICK}
         GizmoDragging: Boolean;
-        DraggingAxis: Integer;
+        DraggingCoord: Integer;
         LastPick: TVector3;
+        LastPickAngle: Single;
+
         { Point on axis closest to given pick.
           Axis may be -1 to indicate we drag on all axes with the same amount. }
         function PointOnAxis(out Intersection: TVector3;
           const Pick: TRayCollisionNode; const Axis: Integer): Boolean;
+
+        { Angle in radians on a plane lying at given Coord
+          (e.g. plane "Z = 0" when Coord = 2).
+          The angle is measured using ArcTan2 on the given plane.
+          Angle is in radians, from -Pi to Pi.
+
+          It is not defined here where's the Angle = 0 exactly, as users
+          of this routine in practice always want to subtract 2 values of such
+          angle, so it doesn't matter "where is Angle = 0". }
+        function AngleOnPlane(out Angle: Single;
+          const Pick: TRayCollisionNode; const Coord: Integer): Boolean;
+
+        procedure DoParentModified;
       protected
         procedure ChangeWorld(const Value: TCastleAbstractRootTransform); override;
         function LocalRayCollision(const RayOrigin, RayDirection: TVector3;
           const TrianglesToIgnoreFunc: TTriangleIgnoreFunc): TRayCollision; override;
       public
         Operation: TVisualizeOperation;
+        OnParentModified: TNotifyEvent;
         constructor Create(AOwner: TComponent); override;
         procedure CameraChanged(const ACamera: TCastleCamera); override;
         function Dragging: boolean; override;
@@ -68,9 +84,11 @@ type
       Gizmo: array [TVisualizeOperation] of TGizmoScene;
     procedure SetOperation(const AValue: TVisualizeOperation);
     procedure SetParent(const AValue: TCastleTransform);
+    procedure GizmoHasModifiedParent(Sender: TObject);
   protected
     procedure Notification(AComponent: TComponent; Operation: TOperation); override;
   public
+    OnParentModified: TNotifyEvent;
     constructor Create(AOwner: TComponent; const AHover: Boolean); reintroduce;
     destructor Destroy; override;
     { Currently visualized TCastleTransform instance.
@@ -151,6 +169,43 @@ begin
     end;
     {$endif DEBUG_GIZMO_PICK}
   end;
+end;
+
+function TVisualizeTransform.TGizmoScene.AngleOnPlane(out Angle: Single;
+  const Pick: TRayCollisionNode; const Coord: Integer): Boolean;
+
+  { Return other 3D coords, in the lopping order X-Y-Z.
+    This results in consistent ArcTan2 results, that makes rotating around
+    any coord in TVisualizeTransform.TGizmoScene.PointingDeviceMove
+    have the same behaviour (no need to invert angle sign for Y coord,
+    as with CastleUtils.RestOf3dCoords). }
+  procedure RestOf3dCoords(const Coord: Integer; out First, Second: Integer);
+  begin
+    case Coord of
+      0: begin First := 1; Second := 2; end;
+      1: begin First := 2; Second := 0; end;
+      2: begin First := 0; Second := 1; end;
+    end;
+  end;
+
+var
+  C1, C2: Integer;
+  PointProjected: TVector2;
+  Intersection: TVector3;
+begin
+  if not TrySimplePlaneRayIntersection(Intersection, Coord, 0, Pick.RayOrigin, Pick.RayDirection) then
+    Exit(false);
+  RestOf3dCoords(Coord, C1, C2);
+  PointProjected[0] := Intersection[C1];
+  PointProjected[1] := Intersection[C2];
+  Angle := ArcTan2(PointProjected[1], PointProjected[0]);
+  Result := true;
+end;
+
+procedure TVisualizeTransform.TGizmoScene.DoParentModified;
+begin
+  if Assigned(OnParentModified) then
+    OnParentModified(Self);
 end;
 
 procedure TVisualizeTransform.TGizmoScene.ChangeWorld(
@@ -237,7 +292,9 @@ begin
 
     W := UniqueParent.WorldTransform;
     ZeroWorld := W.MultPoint(TVector3.Zero);
-    OneWorld := ZeroWorld + ACamera.GravityUp;
+    { Note: We use ACamera.Up, not ACamera.GravityUp, to work sensibly even
+      when looking at world at a direction similar to +Y. }
+    OneWorld := ZeroWorld + ACamera.Up;
 
     (* TODO: why this fails:
     ViewProjectionMatrix := ACamera.ProjectionMatrix * ACamera.Matrix;
@@ -273,6 +330,7 @@ function TVisualizeTransform.TGizmoScene.PointingDevicePress(
   const Pick: TRayCollisionNode; const Distance: Single): Boolean;
 var
   AppearanceName: String;
+  CanDrag: Boolean;
 begin
   Result := inherited;
   if Result then Exit;
@@ -284,14 +342,19 @@ begin
   begin
     AppearanceName := Pick.Triangle^.ShapeNode.Appearance.X3DName;
     case AppearanceName of
-      'MaterialX': DraggingAxis := 0;
-      'MaterialY': DraggingAxis := 1;
-      'MaterialZ': DraggingAxis := 2;
-      'MaterialCenter': DraggingAxis := -1;
+      'MaterialX': DraggingCoord := 0;
+      'MaterialY': DraggingCoord := 1;
+      'MaterialZ': DraggingCoord := 2;
+      'MaterialCenter': DraggingCoord := -1;
       else Exit;
     end;
 
-    if PointOnAxis(LastPick, Pick, DraggingAxis) then
+    if Operation = voRotate then
+      CanDrag := AngleOnPlane(LastPickAngle, Pick, DraggingCoord)
+    else
+      CanDrag := PointOnAxis(LastPick, Pick, DraggingCoord);
+
+    if CanDrag then
     begin
       GizmoDragging := true;
       // keep tracking pointing device events, by TCastleViewport.CapturePointingDevice mechanism
@@ -304,30 +367,42 @@ function TVisualizeTransform.TGizmoScene.PointingDeviceMove(
   const Pick: TRayCollisionNode; const Distance: Single): Boolean;
 var
   NewPick, Diff: TVector3;
+  NewPickAngle, DiffAngle: Single;
   I: Integer;
+  DragSuccess: Boolean;
 begin
   Result := inherited;
   if Result then Exit;
 
   if GizmoDragging then
   begin
-    if PointOnAxis(NewPick, Pick, DraggingAxis) then
+    if Operation = voRotate then
+      DragSuccess := AngleOnPlane(NewPickAngle, Pick, DraggingCoord)
+    else
+      DragSuccess := PointOnAxis(NewPick, Pick, DraggingCoord);
+    if DragSuccess then
     begin
       {$ifndef DEBUG_GIZMO_PICK}
       case Operation of
         voTranslate:
           begin
             Diff := NewPick - LastPick;
+            { Our gizmo display and interaction is affected by existing
+              UniqueParent.Rotation, although the
+              UniqueParent.Translation is applied before rotation
+              technically.
+              So we need to manually multiply Diff by curent rotation. }
+            Diff := RotatePointAroundAxis(UniqueParent.Rotation, Diff);
             UniqueParent.Translation := UniqueParent.Translation + Diff;
           end;
-
-        // TODO: rotate/scale are dummy tests
-        //voRotate:
-        //  UniqueParent.Rotation := (
-        //    QuatFromAxisAngle(UniqueParent.Rotation) *
-        //    QuatFromAxisAngle(TVector3.One[DraggingAxis], Diff.Length)).
-        //    ToAxisAngle;
-
+        voRotate:
+          begin
+            DiffAngle := NewPickAngle - LastPickAngle;
+            UniqueParent.Rotation := (
+              QuatFromAxisAngle(UniqueParent.Rotation) *
+              QuatFromAxisAngle(TVector3.One[DraggingCoord], DiffAngle)).
+              ToAxisAngle;
+          end;
         voScale:
           begin
             for I := 0 to 2 do
@@ -340,12 +415,14 @@ begin
       end;
       {$endif not DEBUG_GIZMO_PICK}
 
-      { No point in updating LastPick: it remains the same, as it is expressed
+      { No point in updating LastPick or LastPickAngle:
+        it remains the same, as it is expressed
         in local coordinate system, which we just changed by changing
         UniqueParent.Translation. }
 
       // update our gizmo size, as we moved ourselves
       CameraChanged(World.MainCamera);
+      DoParentModified;
     end;
   end;
 end;
@@ -393,6 +470,7 @@ constructor TVisualizeTransform.Create(AOwner: TComponent; const AHover: Boolean
     Result.InternalExcludeFromParentBoundingVolume := true;
     Result.Spatial := [ssDynamicCollisions];
     Result.SetTransient;
+    Result.OnParentModified := @GizmoHasModifiedParent;
   end;
 
 begin
@@ -454,6 +532,12 @@ begin
       FParent.Add(Gizmo[Operation]);
     FParent.FreeNotification(Self);
   end;
+end;
+
+procedure TVisualizeTransform.GizmoHasModifiedParent(Sender: TObject);
+begin
+  if Assigned(OnParentModified) then
+    OnParentModified(Self);
 end;
 
 procedure TVisualizeTransform.SetOperation(const AValue: TVisualizeOperation);
