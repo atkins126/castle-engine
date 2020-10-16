@@ -157,8 +157,6 @@ var
 begin
   inherited;
 
-  RenderContext.Clear([cbColor], Black);
-
   if IntroPartTime >= IntroParts[IntroPart].CorrodeDuration then
   begin
     IntroParts[IntroPart].ImageCorroded.Draw(Container.Rect);
@@ -191,7 +189,7 @@ begin
     TUIState.Current := StateMainMenu;
     Result := true;
   end else
-  if Event.IsMouseButton(mbLeft) or Event.IsKey(K_Space) then
+  if Event.IsMouseButton(mbLeft) or Event.IsKey(keySpace) then
   begin
     NextIntroPart;
     Result := true;

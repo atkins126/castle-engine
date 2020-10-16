@@ -24,7 +24,7 @@ uses SysUtils, Classes, Generics.Collections,
   CastleKeysMouse, CastleUtils, CastleClassUtils, CastleGLUtils, CastleFonts,
   CastleRectangles, CastleTimeUtils, CastleInternalPk3DConnexion, CastleColors,
   CastleImages, CastleVectors, CastleJoysticks, CastleApplicationProperties,
-  CastleGLImages;
+  CastleGLImages, CastleRenderContext;
 
 const
   { Default value for container's Dpi, as is usually set on desktops. }
@@ -613,6 +613,15 @@ type
     function SaveScreen(const SaveRect: TFloatRectangle): TRGBImage; overload;
     { @groupEnd }
 
+    { Capture the current container (window) contents to an image with alpha.
+
+      An example:
+      @includeCode(../../../examples/short_api_samples/save_screen_rgba/save_screen_rgba.lpr)
+      @groupBegin }
+    function SaveScreenRgba(const SaveRect: TRectangle): TRGBAlphaImage;
+    function SaveScreenRgba: TRGBAlphaImage;
+    { @groupEnd }
+
     { Capture the current container (window) contents to an image and save it to file,
       following the current platform/user preferred directory to store screenshots.
 
@@ -1010,7 +1019,7 @@ type
       @longCode(#
         if HandleInput then
         begin
-          if Container.Pressed[K_Right] then
+          if Container.Pressed[keyArrowRight] then
             Transform.Position := Transform.Position + Vector3(SecondsPassed * 10, 0, 0);
           HandleInput := not ExclusiveEvents;
         end;
@@ -1491,7 +1500,7 @@ type
         @item(@italic((For fixed-function pipeline:))
           The 2D orthographic projection is always set at the beginning.
           Useful for 2D controls, 3D controls can just override projection
-          matrix, e.g. use @link(CastleGLUtils.PerspectiveProjection).)
+          matrix, e.g. use @link(CastleRenderContext.PerspectiveProjection).)
 
         @item(@italic((For fixed-function pipeline:))
           The modelview matrix is set to identity. The matrix mode
@@ -1505,7 +1514,7 @@ type
           Texturing, lighting, fog is off.)
       )
 
-      Beware that GLSL @link(TGLSLProgram.Current) has undefined value when this is called.
+      Beware that GLSL @link(TRenderContext.CurrentProgram RenderContext.CurrentProgram) has undefined value when this is called.
       You should always set it, before making direct OpenGL drawing calls
       (all the engine drawing routines of course do it already, this is only a concern
       if you make direct OpenGL / OpenGLES calls). }
@@ -3778,6 +3787,19 @@ begin
     WritelnLog('Screen saved to ' + Result);
   end else
     Result := '';
+end;
+
+function TUIContainer.SaveScreenRgba(const SaveRect: TRectangle): TRGBAlphaImage;
+begin
+  EventBeforeRender;
+  EventRender;
+  { This is correct if we use double-buffer. }
+  Result := SaveScreen_NoFlush(TRGBAlphaImage, SaveRect, cbBack) as TRGBAlphaImage;
+end;
+
+function TUIContainer.SaveScreenRgba: TRGBAlphaImage;
+begin
+  Result := SaveScreenRgba(Rect);
 end;
 
 function TUIContainer.Dpi: Single;

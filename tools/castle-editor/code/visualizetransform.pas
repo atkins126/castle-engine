@@ -39,6 +39,8 @@ type
         DraggingCoord: Integer;
         LastPick: TVector3;
         LastPickAngle: Single;
+        GizmoScalingAssumeScale: Boolean;
+        GizmoScalingAssumeScaleValue: TVector3;
 
         { Point on axis closest to given pick.
           Axis may be -1 to indicate we drag on all axes with the same amount. }
@@ -106,7 +108,8 @@ implementation
 uses Math,
   ProjectUtils,
   CastleLog, CastleShapes, CastleViewport, CastleProjection, CastleUtils,
-  CastleQuaternions, X3DNodes, CastleGLUtils;
+  CastleQuaternions, X3DNodes, CastleGLUtils, CastleRenderContext,
+  CastleControl, CastleKeysMouse;
 
 { TVisualizeTransform.TGizmoScene -------------------------------------------- }
 
@@ -268,33 +271,69 @@ end;
 
 procedure TVisualizeTransform.TGizmoScene.CameraChanged(
   const ACamera: TCastleCamera);
+
+  function Projected(const V, X, Y: TVector3): TVector2;
+  begin
+    Result[0] := TVector3.DotProduct(V, X);
+    Result[1] := TVector3.DotProduct(V, Y);
+  end;
+
+var
+  OldScale: TVector3;
+
+  { Surround calls to WorldTransform in this, to account for
+    GizmoScalingAssumeScale[Value]. }
+  procedure BeginWorldTransform;
+  begin
+    if GizmoScalingAssumeScale then
+    begin
+      OldScale := UniqueParent.Scale;
+      UniqueParent.Scale := GizmoScalingAssumeScaleValue;
+    end;
+  end;
+
+  procedure EndWorldTransform;
+  begin
+    if GizmoScalingAssumeScale then
+      UniqueParent.Scale := OldScale;
+  end;
+
 const
   AssumeNear = 1.0;
 var
-  W{, ViewProjectionMatrix}: TMatrix4;
+  // ViewProjectionMatrix: TMatrix4;
   ZeroProjected, OneProjected: TVector2;
   OneDistance, ScaleUniform: Single;
-  ZeroWorld, OneWorld, OneProjected3, ZeroProjected3, CameraPos: TVector3;
+  ZeroWorld, OneWorld, OneProjected3, ZeroProjected3, CameraPos, CameraSide: TVector3;
   CameraNearPlane: TVector4;
   GizmoScale: Single;
 begin
   inherited;
 
-  { Adjust scale to take the same space on screeen.
-    We look at UniqueParent transform, not our transform,
-    to ignore current Scale when measuring. }
-  if (UniqueParent <> nil) and UniqueParent.HasWorldTransform then
+  { Adjust scale to take the same space on screen. }
+  if HasWorldTransform then
   begin
     if ACamera.ProjectionType = ptOrthographic then
       GizmoScale := 0.001 * ACamera.Orthographic.EffectiveHeight
     else
       GizmoScale := 0.25 {TODO:* ACamera.Perspective.EffeectiveFieldOfViewVertical};
 
-    W := UniqueParent.WorldTransform;
-    ZeroWorld := W.MultPoint(TVector3.Zero);
+    BeginWorldTransform;
+
+    { Map two points from gizmo local transformation,
+      to determine correct gizmo scale.
+      These points reflect the parent translation and scale.
+
+      Note that we know that gizmo itself has never any translation,
+      but it may have a scale.
+    }
+    Scale := Vector3(1, 1, 1); // assume gizmo scale = 1, will be changed later
+    ZeroWorld := LocalToWorld(TVector3.Zero);
     { Note: We use ACamera.Up, not ACamera.GravityUp, to work sensibly even
       when looking at world at a direction similar to +Y. }
-    OneWorld := ZeroWorld + ACamera.Up;
+    OneWorld := LocalToWorld(WorldToLocalDirection(ACamera.Up).Normalize);
+
+    EndWorldTransform;
 
     (* TODO: why this fails:
     ViewProjectionMatrix := ACamera.ProjectionMatrix * ACamera.Matrix;
@@ -312,11 +351,16 @@ begin
     if not TryPlaneLineIntersection(ZeroProjected3, CameraNearPlane, CameraPos, ZeroWorld - CameraPos) then
       Exit;
 
-    ZeroProjected := ZeroProjected3.XY;
-    OneProjected := OneProjected3.XY;
+    CameraSide := TVector3.CrossProduct(ACamera.Direction, ACamera.Up);
+    ZeroProjected := Projected(ZeroProjected3, CameraSide, ACamera.Up);
+    OneProjected := Projected(OneProjected3, CameraSide, ACamera.Up);
+
     // get the distance, on screen in pixels, of a 1 unit in 3D around gizmo
     OneDistance := PointsDistance(ZeroProjected, OneProjected);
-    ScaleUniform := Max(0.01, GizmoScale / OneDistance);
+    if IsZero(OneDistance) then
+      ScaleUniform := 1
+    else
+      ScaleUniform := GizmoScale / OneDistance;
     Scale := Vector3(ScaleUniform, ScaleUniform, ScaleUniform);
   end;
 end;
@@ -356,6 +400,20 @@ begin
 
     if CanDrag then
     begin
+      if Operation = voScale then
+      begin
+        { In CameraChanged, we adjust gizmo scale to make it fit within
+          the screen nicely. This way, we actually "nullify" the effect
+          of parent's scale on gizmo size.
+
+          But this has to be disabled within the dragging when scaling,
+          to enable scaling gizmo get smaller/larger as we drag.
+
+          During a single drag, we behave like Scale is constant.
+          Gizmo will be correctly scaled when you release. }
+        GizmoScalingAssumeScale := true;
+        GizmoScalingAssumeScaleValue := UniqueParent.Scale;
+      end;
       GizmoDragging := true;
       // keep tracking pointing device events, by TCastleViewport.CapturePointingDevice mechanism
       Result := true;
@@ -382,17 +440,19 @@ begin
       DragSuccess := PointOnAxis(NewPick, Pick, DraggingCoord);
     if DragSuccess then
     begin
-      {$ifndef DEBUG_GIZMO_PICK}
+      {$ifdef DEBUG_GIZMO_PICK}
+      if TCastleControl.MainControl.Pressed[keyShift] then
+      {$endif DEBUG_GIZMO_PICK}
       case Operation of
         voTranslate:
           begin
             Diff := NewPick - LastPick;
             { Our gizmo display and interaction is affected by existing
-              UniqueParent.Rotation, although the
-              UniqueParent.Translation is applied before rotation
-              technically.
+              UniqueParent.Rotation although the UniqueParent.Translation
+              is applied before rotation technically.
               So we need to manually multiply Diff by curent rotation. }
             Diff := RotatePointAroundAxis(UniqueParent.Rotation, Diff);
+            Diff := Diff * UniqueParent.Scale;
             UniqueParent.Translation := UniqueParent.Translation + Diff;
           end;
         voRotate:
@@ -413,7 +473,6 @@ begin
             UniqueParent.Scale := UniqueParent.Scale * Diff;
           end;
       end;
-      {$endif not DEBUG_GIZMO_PICK}
 
       { No point in updating LastPick or LastPickAngle:
         it remains the same, as it is expressed
@@ -435,6 +494,12 @@ begin
   if Result then Exit;
 
   GizmoDragging := false;
+
+  if GizmoScalingAssumeScale then
+  begin
+    GizmoScalingAssumeScale := false;
+    CameraChanged(World.MainCamera);
+  end;
 end;
 
 procedure TVisualizeTransform.TGizmoScene.LocalRender(const Params: TRenderParams);

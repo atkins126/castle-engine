@@ -957,15 +957,14 @@ type
     property BackgroundWireframe: boolean
       read FBackgroundWireframe write FBackgroundWireframe default false;
 
-    { If yes then we will not draw any background, letting the window contents
-      underneath be visible (in places where we do not draw our own 3D geometry,
-      or where our own geometry is transparent, e.g. by Material.transparency).
-      For this to make sense, make sure that you always place some other 2D control
-      under this viewport, that actually draws something predictable underneath.
+    { If yes then the viewport will not draw a background, letting the window contents
+      underneath be visible (on pixels which are not drawn by this viewport's @link(Items),
+      and on pixels which are drawn but with partially-transparent materials).
 
-      The normal background, derived from @link(Background) will be ignored.
-      We will also not do any RenderContext.Clear on color buffer.
-      Also BackgroundWireframe and BackgroundColor doesn't matter in this case. }
+      In effect, the @link(BackgroundColor), @link(BackgroundWireframe),
+      and any background defined using X3D nodes (like @link(TBackgroundNode),
+      @link(TTextureBackgroundNode), @link(TImageBackgroundNode)) inside
+      @link(TCastleRootTransform.MainScene MainScene) will be ignored. }
     property Transparent: boolean read FTransparent write FTransparent default false;
 
     { At the beginning of rendering, scene manager by default clears
@@ -1078,13 +1077,12 @@ type
       (initial position, direction, up, TCastleCamera.ProjectionNear)
       by looking at the initial world (@link(Items)) when rendering the first frame.
 
-      The @link(AssignDefaultCamera) is called only if this property is @true.
+      The @link(AssignDefaultCamera) is automatically called only if this property is @true.
 
       Also, only if this property is @true, we synchronize
       camera when X3D Viewpoint node changes, or a new X3D Viewpoint node is bound.
 
-      By default it is @true. Setting it to @false effectively means
-      that you control @link(Camera) properties on your own.
+      By default it is @false, which means you control @link(Camera) properties on your own.
     }
     property AutoCamera: Boolean
       read FAutoCamera write SetAutoCamera default false;
@@ -1095,8 +1093,7 @@ type
       This also allows to later synchronize navigation properties when X3D NavigationInfo
       node changes, or a new NavigationInfo node is bound.
 
-      By default it is @true. Setting it to @false effectively means
-      that you control @link(Navigation) on your own.
+      By default it is @false, which means that you control @link(Navigation) on your own.
     }
     property AutoNavigation: Boolean
       read FAutoNavigation write FAutoNavigation default false;
@@ -1245,7 +1242,8 @@ uses DOM, Math,
   CastleRenderingCamera,
   CastleGLUtils, CastleProgress, CastleLog, CastleStringUtils,
   CastleSoundEngine, CastleGLVersion, CastleShapes, CastleTextureImages,
-  CastleComponentSerialize, CastleInternalSettings, CastleXMLUtils, CastleURIUtils;
+  CastleComponentSerialize, CastleInternalSettings, CastleXMLUtils, CastleURIUtils,
+  CastleRenderContext;
 {$warnings on}
 
 procedure Register;
@@ -2222,6 +2220,9 @@ procedure TCastleViewport.RenderFromViewEverything(const RenderingCamera: TRende
   var
     UsedBackground: TBackground;
   begin
+    if Transparent then
+      Exit;
+
     UsedBackground := Background;
     if UsedBackground <> nil then
     begin
@@ -3647,7 +3648,7 @@ var
   R: TRegisteredComponent;
 initialization
   Input_Interact := TInputShortcut.Create(nil, 'Interact (press, open door)', 'interact', igOther);
-  Input_Interact.Assign(K_None, K_None, '', true, mbLeft);
+  Input_Interact.Assign(keyNone, keyNone, '', true, mbLeft);
 
   R := TRegisteredComponent.Create;
   {$warnings off} // using deprecated, to keep reading it from castle-user-interface working

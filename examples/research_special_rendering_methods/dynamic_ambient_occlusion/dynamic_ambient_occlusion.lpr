@@ -35,7 +35,8 @@ uses SysUtils, Classes, Math,
   CastleGLUtils, CastleSceneCore, CastleScene, CastleParameters,
   CastleFilesUtils, CastleStringUtils, CastleGLShaders, CastleShapes,
   X3DFields, CastleImages, CastleGLImages, CastleMessages, CastleLog,
-  CastleGLVersion, CastleViewport, CastleRectangles, CastleApplicationProperties;
+  CastleGLVersion, CastleViewport, CastleRectangles, CastleApplicationProperties,
+  CastleRenderContext;
 
 type
   TDrawType = (dtNormalGL, dtElements, dtElementsIntensity, dtPass1, dtPass2);
@@ -923,7 +924,7 @@ begin
     Window.OnOpen := @Open;
     Window.OnClose := @Close;
     Window.OnUpdate := @Update;
-    Window.SetDemoOptions(K_F11, CharEscape, true);
+    Window.SetDemoOptions(keyF11, CharEscape, true);
     Window.OpenAndRun;
   finally
     FreeAndNil(Viewport);

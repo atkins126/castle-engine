@@ -34,7 +34,8 @@ uses
   CastleCameras, CastleBoxes, CastleTransform, CastleDebugTransform,
   CastleColors,
   // editor units
-  FrameAnchors, VisualizeTransform;
+  FrameAnchors, VisualizeTransform,
+  CastleUndoSystem;
 
 type
   { Frame to visually design component hierarchy. }
@@ -60,6 +61,7 @@ type
     MenuViewportNavigationThirdPerson: TMenuItem;
     MenuViewportNavigationExamine: TMenuItem;
     MenuViewportNavigationNone: TMenuItem;
+    PanelLayoutTop: TPanel;
     PanelLayoutTransform: TPanel;
     PanelEventsInfo: TPanel;
     PanelAnchors: TPanel;
@@ -92,6 +94,7 @@ type
     TabLayout: TTabSheet;
     TabBasic: TTabSheet;
     TabOther: TTabSheet;
+    UpdateObjectInspector: TTimer;
     procedure ButtonClearAnchorDeltasClick(Sender: TObject);
     procedure ButtonResetTransformationClick(Sender: TObject);
     procedure ButtonTransformRotateModeClick(Sender: TObject);
@@ -106,6 +109,10 @@ type
     procedure ControlsTreeDragDrop(Sender, Source: TObject; X, Y: Integer);
     procedure ControlsTreeDragOver(Sender, Source: TObject; X, Y: Integer;
       State: TDragState; var Accept: Boolean);
+    procedure ControlsTreeEditing(Sender: TObject; Node: TTreeNode;
+      var AllowEdit: Boolean);
+    procedure ControlsTreeEditingEnd(Sender: TObject; Node: TTreeNode;
+      Cancel: Boolean);
     procedure ControlsTreeEndDrag(Sender, Target: TObject; X, Y: Integer);
     procedure ControlsTreeSelectionChanged(Sender: TObject);
     procedure ButtonInteractModeClick(Sender: TObject);
@@ -120,6 +127,12 @@ type
     procedure MenuViewportNavigationNoneClick(Sender: TObject);
     procedure MenuViewportNavigationWalkClick(Sender: TObject);
     procedure MenuViewportNavigationThirdPersonClick(Sender: TObject);
+    procedure ClearDesign;
+    procedure RenameSelectedItem;
+    procedure PerformUndoRedo(const UHE: TUndoHistoryElement);
+    procedure PerformRedo;
+    procedure PerformUndo;
+    procedure UpdateObjectInspectorTimer(Sender: TObject);
   protected
     procedure SetParent(AParent: TWinControl); override;
   private
@@ -177,6 +190,7 @@ type
 
     var
       Inspector: array [TInspectorType] of TOIPropertyGrid;
+      FUndoSystem: TUndoSystem;
       PropertyEditorHook: TPropertyEditorHook;
       FDesignUrl: String;
       FDesignRoot: TComponent;
@@ -238,15 +252,17 @@ type
       read GetSelectedTransform write SetSelectedTransform;
 
     procedure InspectorBasicFilter(Sender: TObject; AEditor: TPropertyEditor;
-      var aShow: boolean);
+      var aShow: Boolean);
     procedure InspectorLayoutFilter(Sender: TObject; AEditor: TPropertyEditor;
-      var aShow: boolean);
+      var aShow: Boolean);
     procedure InspectorOtherFilter(Sender: TObject; AEditor: TPropertyEditor;
-      var aShow: boolean);
+      var aShow: Boolean);
     procedure MarkModified;
     procedure PropertyGridModified(Sender: TObject);
     { Is Child selectable and visible in hierarchy. }
     class function Selectable(const Child: TComponent): Boolean; static;
+    { Is Child deletable by user (this implies it is also selectable). }
+    function Deletable(const Child: TComponent): Boolean;
     procedure UpdateDesign;
     procedure UpdateSelectedControl;
     function ProposeName(const ComponentClass: TComponentClass;
@@ -261,14 +277,16 @@ type
     procedure ChangeMode(const NewMode: TMode);
     procedure ModifiedOutsideObjectInspector;
     procedure InspectorFilter(Sender: TObject;
-      AEditor: TPropertyEditor; var AShow: boolean; const Section: TPropertySection);
+      AEditor: TPropertyEditor; var AShow: Boolean; const Section: TPropertySection);
     procedure GizmoHasModifiedParent(Sender: TObject);
   public
     OnUpdateFormCaption: TNotifyEvent;
+    OnSelectionChanged: TNotifyEvent;
+    function RenamePossible: Boolean;
     constructor Create(TheOwner: TComponent); override;
     destructor Destroy; override;
 
-    procedure SaveDesign(const Url: string);
+    procedure SaveDesign(const Url: String);
     { Changes DesignRoot, DesignUrl and all the associated user-interface. }
     procedure OpenDesign(const NewDesignRoot, NewDesignOwner: TComponent;
       const NewDesignUrl: String);
@@ -288,10 +306,12 @@ type
     procedure UIScaling(const UIScaling: TUIScaling;
       const UIReferenceWidth, UIReferenceHeight: Single);
 
+    property UndoSystem: TUndoSystem read FUndoSystem;
     property DesignUrl: String read FDesignUrl;
     { Root saved/loaded to component file }
     property DesignRoot: TComponent read FDesignRoot;
     property DesignModified: Boolean read FDesignModified;
+    procedure RecordUndo(const UndoComment: String; const ItemIndex: Integer = -1);
 
     procedure CurrentComponentApiUrl(var Url: String);
   end;
@@ -300,10 +320,10 @@ implementation
 
 uses // use Windows unit with FPC 3.0.x, to get TSplitRectType enums
   {$ifdef VER3_0} {$ifdef MSWINDOWS} Windows, {$endif} {$endif}
-  TypInfo, StrUtils, Math, Graphics, Types, Dialogs,
+  TypInfo, StrUtils, Math, Graphics, Types, Dialogs, LCLType,
   CastleComponentSerialize, CastleUtils, Castle2DSceneManager,
-  CastleURIUtils, CastleStringUtils, CastleGLUtils,
-  CastleProjection, CastleScene, CastleThirdPersonNavigation,
+  CastleURIUtils, CastleStringUtils, CastleGLUtils, CastleTimeUtils,
+  CastleProjection, CastleScene, CastleLog, CastleThirdPersonNavigation,
   EditorUtils;
 
 {$R *.lfm}
@@ -372,7 +392,7 @@ function TDesignFrame.TDesignerLayer.HoverUserInterface(
     - uses RenderRectWithBorder (to be able to drag complete control)
     - doesn't need "if the control covers the whole Container" hack. }
   function SimpleCapturesEventsAtPosition(const UI: TCastleUserInterface;
-    const Position: TVector2): boolean;
+    const Position: TVector2): Boolean;
   begin
     Result := UI.RenderRectWithBorder.Contains(Position);
   end;
@@ -562,7 +582,15 @@ begin
   if Result then Exit;
 
   if (Event.IsMouseButton(mbLeft) or Event.IsMouseButton(mbRight)) then
+  begin
     DraggingMode := dmNone;
+
+    //Note, that we may want to have better comment message here,
+    //especially when we start adding gizmos and motion event can change
+    //a lot of different values
+    if Frame.UndoSystem.ScheduleRecordUndoOnRelease then
+      Frame.RecordUndo('');
+  end;
 end;
 
 function TDesignFrame.TDesignerLayer.Motion(const Event: TInputMotion): Boolean;
@@ -610,6 +638,10 @@ function TDesignFrame.TDesignerLayer.Motion(const Event: TInputMotion): Boolean;
     MinHeight = 10;
   begin
     if not DragAllowed(UI, Vector2(X, Y)) then Exit;
+
+    //this will schedule recording Undo OnRelease
+    //and will prevent from recording Undo by applying changes below
+    Frame.UndoSystem.ScheduleRecordUndoOnRelease := true;
 
     case DraggingMode of
       dmTranslate:
@@ -911,6 +943,8 @@ begin
 
   PropertyEditorHook := TPropertyEditorHook.Create(Self);
 
+  FUndoSystem := TUndoSystem.Create(Self);
+
   Inspector[itBasic] := CommonInspectorCreate;
   Inspector[itBasic].Parent := TabBasic;
   Inspector[itBasic].OnEditorFilter := @InspectorBasicFilter;
@@ -921,7 +955,7 @@ begin
   Inspector[itLayout].OnEditorFilter := @InspectorLayoutFilter;
   Inspector[itLayout].Filter := tkProperties;
   Inspector[itLayout].Align := alBottom;
-  Inspector[itLayout].AnchorToNeighbour(akTop, 0, PanelLayoutTransform);
+  Inspector[itLayout].AnchorToNeighbour(akTop, 0, PanelLayoutTop);
 
   Inspector[itOther] := CommonInspectorCreate;
   Inspector[itOther].Parent := TabOther;
@@ -945,6 +979,10 @@ begin
   CastleControl.OnUpdate := @CastleControlUpdate;
   CastleControl.StencilBits := 8; // enable shadow volumes
 
+  {$ifdef DEBUG_GIZMO_PICK}
+  TCastleControl.MainControl := CastleControl;
+  {$endif DEBUG_GIZMO_PICK}
+
   DesignerLayer := TDesignerLayer.Create(Self);
   DesignerLayer.Frame := Self;
   CastleControl.Controls.InsertFront(DesignerLayer);
@@ -963,6 +1001,10 @@ begin
 
   //ChangeMode(moInteract);
   ChangeMode(moModifyUi); // most expected default, it seems
+
+  // Input_Interact (for gizmos) reacts to both left and right
+  Input_Interact.MouseButton2Use := true;
+  Input_Interact.MouseButton2 := mbRight;
 end;
 
 destructor TDesignFrame.Destroy;
@@ -971,7 +1013,7 @@ begin
   inherited Destroy;
 end;
 
-procedure TDesignFrame.SaveDesign(const Url: string);
+procedure TDesignFrame.SaveDesign(const Url: String);
 begin
   if DesignRoot is TCastleUserInterface then
     UserInterfaceSave(TCastleUserInterface(DesignRoot), Url)
@@ -985,20 +1027,84 @@ begin
   OnUpdateFormCaption(Self);
 end;
 
-procedure TDesignFrame.OpenDesign(const NewDesignRoot, NewDesignOwner: TComponent;
-  const NewDesignUrl: String);
+procedure TDesignFrame.ClearDesign;
+begin
+  ControlsTree.Items.Clear;
+  UpdateSelectedControl;
+  //CastleControl.Controls.Clear; // don't clear it, leave DesignerLayer
+  FDesignRoot := nil;
 
-  procedure ClearDesign;
+  // this actually frees everything inside DesignRoot
+  FreeAndNil(DesignOwner);
+end;
+
+procedure TDesignFrame.PerformUndoRedo(const UHE: TUndoHistoryElement);
+
+  function GetInspectorForActiveTab: TOIPropertyGrid;
+  var
+    InspectorType: TInspectorType;
   begin
-    ControlsTree.Items.Clear;
-    UpdateSelectedControl;
-    //CastleControl.Controls.Clear; // don't clear it, leave DesignerLayer
-    FDesignRoot := nil;
-
-    // this actually frees everything inside DesignRoot
-    FreeAndNil(DesignOwner);
+    for InspectorType in TInspectorType do
+    begin
+      if Inspector[InspectorType].Parent = ControlProperties.ActivePage then
+        Exit(Inspector[InspectorType]);
+    end;
+    Result := nil;
   end;
 
+var
+  NewDesignOwner: TComponent;
+  InspectorType: TInspectorType;
+begin
+  for InspectorType in TInspectorType do
+    Inspector[InspectorType].SaveChanges;
+
+  NewDesignOwner := TComponent.Create(Self);
+  OpenDesign(StringToComponent(UHE.Data, NewDesignOwner), NewDesignOwner, FDesignUrl);
+
+  if UHE.Selected <> '' then
+    SetSelectedComponent(NewDesignOwner.FindRequiredComponent(UHE.Selected));
+  if UHE.ItemIndex >= 0 then
+  begin
+    ControlProperties.TabIndex := UHE.TabIndex;
+    GetInspectorForActiveTab.SetItemIndexAndFocus(UHE.ItemIndex);
+  end;
+end;
+
+procedure TDesignFrame.PerformRedo;
+begin
+  PerformUndoRedo(UndoSystem.Redo);
+end;
+
+procedure TDesignFrame.PerformUndo;
+begin
+  {//save current edited value and
+  if not UndoSystem.IsRedoPossible then
+  begin
+    RecordUndo;
+    UndoSystem.Undo;
+  end;}
+  PerformUndoRedo(UndoSystem.Undo);
+end;
+
+procedure TDesignFrame.UpdateObjectInspectorTimer(Sender: TObject);
+//var
+//  InspectorType: TInspectorType;
+begin
+  { In many cases, properties may change but property editor doesn't reflect it.
+    E.g.
+    - TCastleTransform changes by ExposeTransforms mechanism
+    - Caption changes because you modified Name, and they used to match.
+    The only universal solution to make OI up-to-date seems to be to just
+    occasionally refresh it. }
+
+  // TODO: This is not good, it breaks editing within object inspector, resets cursor
+  //for InspectorType in TInspectorType do
+  //  Inspector[InspectorType].RefreshPropertyValues;
+end;
+
+procedure TDesignFrame.OpenDesign(const NewDesignRoot, NewDesignOwner: TComponent;
+  const NewDesignUrl: String);
 var
   Background: TCastleRectangleControl;
   TempViewport: TCastleViewport;
@@ -1061,7 +1167,11 @@ begin
     raise Exception.CreateFmt('Unrecognized file extension %s (MIME type %s)',
       [ExtractFileExt(NewDesignUrl), Mime]);
 
+  UndoSystem.ClearUndoHistory;
+
   OpenDesign(NewDesignRoot, NewDesignOwner, NewDesignUrl);
+
+  RecordUndo('Open design');
 end;
 
 function TDesignFrame.FormCaption: String;
@@ -1104,6 +1214,7 @@ procedure TDesignFrame.AddComponent(const ComponentClass: TComponentClass;
     ModifiedOutsideObjectInspector;
     UpdateDesign;
     SelectedComponent := NewComponent; // select after adding, makes it natural to edit
+    RecordUndo('Add component');
   end;
 
   procedure AddTransform(const ParentComponent: TCastleTransform);
@@ -1173,10 +1284,52 @@ procedure TDesignFrame.DeleteComponent;
     I: Integer;
   begin
     for I := 0 to List.Count - 1 do
-      if (not (csSubComponent in List[I].ComponentStyle)) and
-         (List[I] <> DesignRoot) then
+      if Deletable(List[I]) then
         Exit(List[I]);
     Result := nil;
+  end;
+
+  procedure FreeTransformChildren(const T: TCastleTransform); forward;
+  procedure FreeUiChildren(const C: TCastleUserInterface); forward;
+
+  { Delete C and all children.
+    We have to delete things recursively, otherwise they would keep existing,
+    taking resources and reserving names in DesignRoot,
+    even though they would not be visible when disconnected from parent
+    hierarchy. }
+  procedure FreeRecursively(const C: TComponent);
+  begin
+    if not Deletable(C) then
+      Exit;
+    if C is TCastleTransform then
+    begin
+      FreeTransformChildren(TCastleTransform(C));
+    end else
+    if C is TCastleUserInterface then
+    begin
+      FreeUiChildren(TCastleUserInterface(C));
+      if C is TCastleViewport then
+        FreeTransformChildren(TCastleViewport(C).Items);
+    end;
+    C.Free;
+  end;
+
+  procedure FreeTransformChildren(const T: TCastleTransform);
+  var
+    I: Integer;
+  begin
+    for I := T.Count - 1 downto 0 do
+      if Deletable(T[I]) then
+        FreeRecursively(T[I]);
+  end;
+
+  procedure FreeUiChildren(const C: TCastleUserInterface);
+  var
+    I: Integer;
+  begin
+    for I := C.ControlsCount - 1 downto 0 do
+      if Deletable(C.Controls[I]) then
+        FreeRecursively(C.Controls[I]);
   end;
 
 var
@@ -1197,7 +1350,7 @@ begin
       repeat
         C := FirstDeletableComponent(Selected);
         if C <> nil then
-          FreeAndNil(C)
+          FreeRecursively(C)
         else
           Break;
       until false;
@@ -1213,6 +1366,7 @@ begin
       { call this after UpdateDesign, otherwise tree is not ready,
         and events caused by ModifiedOutsideObjectInspector may expect it is. }
       ModifiedOutsideObjectInspector;
+      RecordUndo('Delete component');
     end;
   finally FreeAndNil(Selected) end;
 end;
@@ -1239,6 +1393,7 @@ procedure TDesignFrame.PasteComponent;
     ModifiedOutsideObjectInspector;
     UpdateDesign;
     SelectedComponent := NewComponent; // select after adding, makes it natural to edit
+    RecordUndo('Paste component');
   end;
 
 var
@@ -1303,6 +1458,7 @@ procedure TDesignFrame.DuplicateComponent;
     ModifiedOutsideObjectInspector;
     UpdateDesign;
     SelectedComponent := NewComponent; // select after adding, makes it natural to edit
+    RecordUndo('Duplicate component');
   end;
 
   procedure DuplicateUserInterface(const Selected: TCastleUserInterface);
@@ -1583,10 +1739,17 @@ begin
     ErrorBox(PendingErrorBox);
     PendingErrorBox := '';
   end;
+
+  if InternalCastleDesignInvalidate then
+  begin
+    ModifiedOutsideObjectInspector;
+    UpdateDesign;
+    //WritelnWarning('CGE needed to explicitly tell editor to refresh hierarchy');
+  end;
 end;
 
 procedure TDesignFrame.InspectorFilter(Sender: TObject;
-  AEditor: TPropertyEditor; var AShow: boolean; const Section: TPropertySection);
+  AEditor: TPropertyEditor; var AShow: Boolean; const Section: TPropertySection);
 var
   PropertyName: String;
   Instance: TPersistent;
@@ -1619,19 +1782,19 @@ begin
 end;
 
 procedure TDesignFrame.InspectorBasicFilter(Sender: TObject;
-  AEditor: TPropertyEditor; var aShow: boolean);
+  AEditor: TPropertyEditor; var aShow: Boolean);
 begin
   InspectorFilter(Sender, AEditor, AShow, psBasic);
 end;
 
 procedure TDesignFrame.InspectorLayoutFilter(Sender: TObject;
-  AEditor: TPropertyEditor; var aShow: boolean);
+  AEditor: TPropertyEditor; var aShow: Boolean);
 begin
   InspectorFilter(Sender, AEditor, AShow, psLayout);
 end;
 
 procedure TDesignFrame.InspectorOtherFilter(Sender: TObject;
-  AEditor: TPropertyEditor; var aShow: boolean);
+  AEditor: TPropertyEditor; var aShow: Boolean);
 begin
   InspectorFilter(Sender, AEditor, AShow, psOther);
 end;
@@ -1665,7 +1828,37 @@ begin
     end;
   end;
 
+  if not UndoSystem.ScheduleRecordUndoOnRelease then
+  begin
+    { here we have PropertyGridModified conflict with Schedule Record Undo OnRelease
+      So we should ignore changes to PropertyGrid in case the change is caused
+      by dragging, otherwise we'll record an undo for every OnMotion of dragging }
+    if Sender is TOICustomPropertyGrid then
+      RecordUndo('Change ' + TOICustomPropertyGrid(Sender).GetActiveRow.Name + ' to ' + TOICustomPropertyGrid(Sender).CurrentEditValue, TOICustomPropertyGrid(Sender).ItemIndex)
+    else
+      RecordUndo('');
+  end;
+
   MarkModified;
+end;
+
+procedure TDesignFrame.RecordUndo(const UndoComment: String; const ItemIndex: Integer = -1);
+var
+  StartTimer: TTimerResult;
+  SelectedName: String;
+  SelectedC: TComponent;
+begin
+  StartTimer := Timer;
+
+  SelectedC := GetSelectedComponent;
+  if (SelectedC <> nil) then
+    SelectedName := SelectedC.Name
+  else
+    SelectedName := '';
+
+  UndoSystem.RecordUndo(ComponentToString(FDesignRoot), SelectedName, ItemIndex, ControlProperties.TabIndex, UndoComment);
+
+  WriteLnLog('Undo recorded in %fs for %s', [StartTimer.ElapsedTime, SelectedName]);
 end;
 
 procedure TDesignFrame.MarkModified;
@@ -1682,6 +1875,13 @@ begin
     Same for TCastleCheckbox children.
     Consequently, do not allow to select stuff inside. }
   Result := not (csTransient in Child.ComponentStyle);
+end;
+
+function TDesignFrame.Deletable(const Child: TComponent): Boolean;
+begin
+  Result := Selectable(Child) and
+    (not (csSubComponent in Child.ComponentStyle)) and
+    (Child <> DesignRoot);
 end;
 
 procedure TDesignFrame.UpdateDesign;
@@ -1740,6 +1940,8 @@ begin
   Node.Expand(true);
 
   UpdateSelectedControl;
+
+  InternalCastleDesignInvalidate := false;
 end;
 
 procedure TDesignFrame.GetSelected(out Selected: TComponentList;
@@ -1844,6 +2046,8 @@ var
   V: TCastleViewport;
   T: TCastleTransform;
 begin
+  OnSelectionChanged(Self); // Calling it in ControlsTreeSelectionChanged doesn't seem to be enough as RenamePossible is true there even in case SelectedCount = 0 (does it use some obsolete value?)
+
   GetSelected(Selected, SelectedCount);
   try
     case SelectedCount of
@@ -1864,7 +2068,7 @@ begin
   finally FreeAndNil(Selected) end;
 
   UI := SelectedUserInterface;
-  PanelAnchors.Visible := UI <> nil;
+  SetEnabledExists(PanelAnchors, UI <> nil);
   if UI <> nil then
   begin
     UpdateLabelSizeInfo(UI);
@@ -1878,7 +2082,7 @@ begin
     LabelSelectedViewport.Caption := V.Name + ':';
 
   T := SelectedTransform;
-  PanelLayoutTransform.Visible := T <> nil;
+  SetEnabledExists(PanelLayoutTransform, T <> nil);
   VisualizeTransformSelected.Parent := T; // works also in case SelectedTransform is nil
 end;
 
@@ -1923,6 +2127,32 @@ begin
   if ControlsTreeNodeUnderMouse <> nil then
     ControlsTreeNodeUnderMouseSide := NodeSide(ControlsTreeNodeUnderMouse, X, Y);
   ControlsTree.Invalidate; // force custom-drawn look redraw
+end;
+
+procedure TDesignFrame.ControlsTreeEditing(Sender: TObject; Node: TTreeNode;
+  var AllowEdit: Boolean);
+begin
+  { This event is fired when calling TCustomListView.CanEdit
+    which itself is called in TCustomListView.ShowEditor
+    therefore this event preceeds initializing and showing of the editor.
+
+    Here we have to "restore" the pure name of the component (without class name)
+    before starting edit. }
+  Node.Text := TComponent(Node.Data).Name;
+end;
+
+procedure TDesignFrame.ControlsTreeEditingEnd(Sender: TObject; Node: TTreeNode;
+  Cancel: Boolean);
+var
+  UndoComment: String;
+  Sel: TComponent;
+begin
+  Sel := TComponent(Node.Data);
+  UndoComment := 'Rename ' + Sel.Name + ' into ' + Node.Text;
+  Sel.Name := Node.Text;
+  ModifiedOutsideObjectInspector;
+  RecordUndo(UndoComment); // It'd be good if we set "ItemIndex" to index of "name" field, but there doesn't seem to be an easy way to
+  Node.Text := ComponentCaption(Sel);
 end;
 
 function TDesignFrame.ControlsTreeAllowDrag(const Src, Dst: TTreeNode): Boolean;
@@ -1991,6 +2221,7 @@ begin
   end;
 
   ModifiedOutsideObjectInspector;
+  RecordUndo('');
 end;
 
 procedure TDesignFrame.ControlsTreeEndDrag(Sender, Target: TObject; X,
@@ -1998,6 +2229,17 @@ procedure TDesignFrame.ControlsTreeEndDrag(Sender, Target: TObject; X,
 begin
   ControlsTreeNodeUnderMouse := nil;
   ControlsTree.Invalidate; // force custom-drawn look redraw
+end;
+
+function TDesignFrame.RenamePossible: Boolean;
+begin
+  Result := ControlsTree.SelectionCount = 1;
+end;
+
+procedure TDesignFrame.RenameSelectedItem;
+begin
+  if RenamePossible then
+    ControlsTree.Selected.EditText;
 end;
 
 procedure TDesignFrame.ControlsTreeDragDrop(Sender, Source: TObject; X,
@@ -2027,6 +2269,7 @@ procedure TDesignFrame.ControlsTreeDragDrop(Sender, Source: TObject; X,
 
     ModifiedOutsideObjectInspector;
     UpdateDesign;
+    RecordUndo('Drag''n''drop');
   end;
 
   { Does Parent contains PotentialChild, searching recursively.
@@ -2254,6 +2497,7 @@ begin
     UI.HorizontalAnchorDelta := 0;
     UI.VerticalAnchorDelta := 0;
     ModifiedOutsideObjectInspector;
+    RecordUndo('');
   end;
 end;
 
@@ -2331,6 +2575,7 @@ begin
   V := SelectedViewport;
   V.Setup2D;
   ModifiedOutsideObjectInspector;
+  RecordUndo('Camera Setup for 2D View and Projection');
 end;
 
 procedure TDesignFrame.MenuItemViewportCameraCurrentFromInitialClick(
@@ -2344,6 +2589,7 @@ begin
     V.Camera.InitialDirection,
     V.Camera.InitialUp);
   ModifiedOutsideObjectInspector;
+  RecordUndo('Camera Current := Initial');
 end;
 
 procedure TDesignFrame.MenuItemViewportCameraViewAllClick(Sender: TObject);
@@ -2384,6 +2630,7 @@ begin
     V.Navigation.ModelBox := Box;
 
   ModifiedOutsideObjectInspector;
+  RecordUndo('Camera Current := View All');
 end;
 
 procedure TDesignFrame.MenuItemViewportCameraSetInitialClick(Sender: TObject);
@@ -2398,6 +2645,7 @@ begin
   V.AutoCamera := false;
 
   ModifiedOutsideObjectInspector;
+  RecordUndo('Camera Initial := Current');
 end;
 
 procedure TDesignFrame.MenuItemViewportSort2DClick(Sender: TObject);
@@ -2410,6 +2658,7 @@ begin
 
   ModifiedOutsideObjectInspector;
   UpdateDesign; // make the tree reflect new order
+  RecordUndo('Sort Items For Correct 2D Blending');
 end;
 
 {
@@ -2463,6 +2712,7 @@ begin
     SelectedUserInterface := NewNavigation
   else
     SelectedUserInterface := V;
+  RecordUndo('Change viewport navigation');
 end;
 
 procedure TDesignFrame.MenuViewportNavigationNoneClick(Sender: TObject);
@@ -2644,6 +2894,7 @@ begin
   // do not call PropertyGridModified if nothing selected, e.g. after delete operation
   if ControlsTree.Selected <> nil then
     PropertyGridModified(nil);
+
   MarkModified;
 end;
 
@@ -2667,7 +2918,11 @@ begin
      (ComponentClass = TCastleRectangleControl) then
     (NewRoot as TCastleUserInterface).FullSize := true;
 
+  UndoSystem.ClearUndoHistory;
+
   OpenDesign(NewRoot, NewDesignOwner, '');
+
+  RecordUndo('Start new design');
 end;
 
 initialization

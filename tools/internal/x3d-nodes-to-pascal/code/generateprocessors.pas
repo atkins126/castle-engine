@@ -250,11 +250,10 @@ begin
   // replace X3D prefix with Abstract prefix
   if IsAbstract then
   begin
-    { On X3DViewpointNode, we have both
-      TAbstractX3DViewpointNode and TAbstractViewpointNode,
-      to support also older VRML versions. Similar for grouping. }
-    if (X3DType <> 'X3DViewpointNode') and
-       (X3DType <> 'X3DGroupingNode') then
+    { On X3DGroupingNode, we have both
+      TAbstractX3DGroupingNode and TAbstractGroupingNode,
+      to support also older VRML versions. }
+    if X3DType <> 'X3DGroupingNode' then
       Result := PrefixRemove('X3D', Result, true);
     Result := 'Abstract' + Result;
   end;
@@ -921,7 +920,6 @@ begin
      (Node.X3DType + '.' + Field.X3DName = 'Viewpoint.position') or
      (Node.X3DType + '.' + Field.X3DName = 'OrthoViewpoint.position') or
      (Node.X3DType + '.' + Field.X3DName = 'GeoViewpoint.position') or
-     (Node.X3DType + '.' + Field.X3DName = 'X3DViewpointNode.orientation') or
      (Node.X3DType + '.' + Field.X3DName = 'TextureProperties.magnificationFilter') or
      (Node.X3DType + '.' + Field.X3DName = 'TextureProperties.minificationFilter') or
      (Node.X3DType + '.' + Field.X3DName = 'Appearance.material') or

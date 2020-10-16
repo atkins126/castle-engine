@@ -1570,6 +1570,7 @@ var
     begin
       OrthoViewpoint := TOrthoViewpointNode.Create;
       OrthoViewpoint.X3DName := Camera.Name;
+      OrthoViewpoint.GravityTransform := false;
       ParentGroup.AddChildren(OrthoViewpoint);
     end else
     begin
@@ -1577,6 +1578,7 @@ var
       Viewpoint.X3DName := Camera.Name;
       if Camera.Perspective.YFov <> 0 then
         Viewpoint.FieldOfView := Camera.Perspective.YFov / 2;
+      Viewpoint.GravityTransform := false;
       ParentGroup.AddChildren(Viewpoint);
     end;
   end;
@@ -2305,10 +2307,14 @@ begin
       ReadHeader;
       Lights.ReadHeader(Document);
 
-      // read appearances (called "materials" in glTF; in X3D "material" is something smaller)
+      { Initialize DefaultAppearance.
+        Testcase: floor of ~/sources/castle-engine/demo-models/gltf/punctual_lights/test_lights.gltf,
+        it should use PBR (not be affected by PhongShading attribute). }
       DefaultAppearance := TGltfAppearanceNode.Create;
-      DefaultAppearance.Material := TMaterialNode.Create;
+      DefaultAppearance.Material := TPhysicalMaterialNode.Create;
       DefaultAppearance.DoubleSided := false;
+
+      // read appearances (called "materials" in glTF; in X3D "material" is something smaller)
       Appearances := TX3DNodeList.Create(false);
       for Material in Document.Materials do
         Appearances.Add(ReadAppearance(Material));

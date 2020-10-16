@@ -51,7 +51,6 @@ procedure Render(Container: TUIContainer);
   end;
 
 begin
-  RenderContext.Clear([cbColor], Black);
   DrawPoint(ListenerPosition, Yellow);
   DrawPoint(SoundPosition, White);
 end;
@@ -104,6 +103,6 @@ begin
   Window.OnTimer := @Timer;
   Window.OnRender := @Render;
   Window.OnMotion := @Motion;
-  Window.SetDemoOptions(K_F11, CharEscape, true);
+  Window.SetDemoOptions(keyF11, CharEscape, true);
   Window.OpenAndRun;
 end.

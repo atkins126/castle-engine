@@ -588,7 +588,7 @@ implementation
 
 uses Math, Contnrs, LazUTF8, Clipbrd,
   CastleGLUtils, CastleStringUtils, X3DLoad, CastleLog,
-  CastleControls;
+  CastleControls, CastleRenderContext;
 
 // TODO: We never call Fps._Sleeping, so Fps.WasSleeping will be always false.
 // This may result in confusing Fps.ToString in case AutoRedisplay was false.
@@ -999,9 +999,9 @@ end;
 
 procedure TCastleControlBase.UpdateShiftState(const Shift: TShiftState);
 begin
-  Pressed.Keys[K_Shift] := ssShift in Shift;
-  Pressed.Keys[K_Alt  ] := ssAlt   in Shift;
-  Pressed.Keys[K_Ctrl ] := ssCtrl  in Shift;
+  Pressed.Keys[keyShift] := ssShift in Shift;
+  Pressed.Keys[keyAlt  ] := ssAlt   in Shift;
+  Pressed.Keys[keyCtrl ] := ssCtrl  in Shift;
 end;
 
 procedure TCastleControlBase.KeyPressHandlerPress(Sender: TObject;
@@ -1084,7 +1084,7 @@ begin
 
   inherited KeyUp(Key, Shift); { LCL OnKeyUp before our callbacks }
 
-  if (MyKey <> K_None) or (MyKeyString <> '') then
+  if (MyKey <> keyNone) or (MyKeyString <> '') then
     if Container.EventRelease(InputKey(MousePosition, MyKey, MyKeyString)) then
       Key := 0; // handled
 end;
