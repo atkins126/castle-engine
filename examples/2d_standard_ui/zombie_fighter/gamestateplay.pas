@@ -65,11 +65,11 @@ begin
   Scene.Load('castle-data:/level1.x3d');
   Scene.Spatial := [ssRendering, ssDynamicCollisions];
   Scene.ProcessEvents := true;
-  Scene.Attributes.PhongShading := true; // looks better
+  Scene.RenderOptions.PhongShading := true; // looks better
   { zombie sprites are rendered using blending, and you can see multiple
     sprites sometimes at once. So we need sorting, to render them correctly.
     This is actually the default now. }
-  //Scene.Attributes.BlendingSort := bs3D;
+  //Scene.RenderOptions.BlendingSort := bs3D;
 
   WalkNavigation := TCastleWalkNavigation.Create(FreeAtStop);
   WalkNavigation.MoveSpeed := 10;
@@ -163,7 +163,7 @@ begin
   Result := inherited;
   if Result then Exit;
 
-  if Event.IsMouseButton(mbLeft) then
+  if Event.IsMouseButton(buttonLeft) then
   begin
     Triangle := Viewport.TriangleHit;
     if (Triangle <> nil) and // we clicked on something that has triangle information (e.g. because it has Spatial with ssDynamicCollisions)

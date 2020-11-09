@@ -46,7 +46,7 @@ implementation
 
 uses Math, SysUtils,
   CastleGLUtils, CastleStringUtils, CastleProgress, CastleUtils, CastleCameras,
-  CastleFilesUtils, CastleUIControls, CastleRenderer, CastleImages,
+  CastleFilesUtils, CastleUIControls, CastleImages,
   CastleGameNotifications, CastleRectangles, CastleColors,
   GameStateMainMenu;
 
@@ -150,7 +150,7 @@ begin
       end;
     itMouseButton:
       begin
-        if Event.MouseButton = mbLeft then
+        if Event.MouseButton = buttonLeft then
         begin
           if Viewport.MouseRayHit <> nil then
             Player.WantsToWalk(Viewport.MouseRayHit.Last.Point);

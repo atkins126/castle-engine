@@ -58,7 +58,7 @@ uses SysUtils, DOM,
   CastleFilesUtils, CastleVectors,
   CastleGLUtils, CastleImages, CastleSoundEngine,
   CastleUIControls, CastleStringUtils, CastleXMLUtils,
-  CastleColors, CastleApplicationProperties,
+  CastleColors, CastleApplicationProperties, CastleRenderOptions,
   GameConfiguration, GameSound, GameStateMainMenu;
 
 { TStateIntro.TIntroPart ----------------------------------------------------- }
@@ -189,7 +189,7 @@ begin
     TUIState.Current := StateMainMenu;
     Result := true;
   end else
-  if Event.IsMouseButton(mbLeft) or Event.IsKey(keySpace) then
+  if Event.IsMouseButton(buttonLeft) or Event.IsKey(keySpace) then
   begin
     NextIntroPart;
     Result := true;

@@ -265,12 +265,34 @@ type
   end;
 
 procedure TPlayerHUD.Render;
+
+  procedure DisplayCurrentAmmo;
+  var
+    AmmoStr: String;
+    GunResource: TItemWeaponResource;
+    GunIndex: Integer;
+    Gun: TItemWeapon;
+  begin
+    GunResource := Resources.FindName('Gun') as TItemWeaponResource;
+    GunIndex := Player.Inventory.FindResource(GunResource);
+    if GunIndex <> -1 then // owns gun?
+    begin
+      Gun := Player.Inventory[GunIndex] as TItemWeapon;
+      AmmoStr := Format('Loaded Ammo: %d / %d', [
+        Gun.AmmoLoaded,
+        GunResource.AttackAmmoCapacity
+      ]);
+      UIFont.Print(10, ContainerHeight - 220, Green, AmmoStr);
+    end;
+  end;
+
+
 const
   InventoryImageSize = 128;
 var
   I: Integer;
   X, Y: Single;
-  S: string;
+  S: String;
 begin
   inherited;
 
@@ -285,6 +307,8 @@ begin
   Y := Y - (UIFont.RowHeight + ControlsMargin);
   UIFont.Print(ControlsMargin, Y, Yellow,
     Format('Player life: %f / %f', [Player.Life, Player.MaxLife]));
+
+  DisplayCurrentAmmo;
 
   { show FPS }
   UIFont.PrintRect(Window.Rect.Grow(-ControlsMargin), Red,
@@ -318,7 +342,7 @@ begin
   for I := 0 to Player.Inventory.Count - 1 do
   begin
     X := ControlsMargin + I * (InventoryImageSize + ControlsMargin);
-    Player.Inventory[I].Resource.DrawableImage.Draw(X, Y);
+    Player.Inventory[I].Resource.DrawableImage.Draw(FloatRectangle(X, Y, InventoryImageSize, InventoryImageSize));
     S := Player.Inventory[I].Resource.Caption;
     if Player.Inventory[I].Quantity <> 1 then
       S := S + Format(' (%d)', [Player.Inventory[I].Quantity]);
@@ -351,6 +375,68 @@ end;
 var
   PlayerHUD: TPlayerHUD;
 
+
+{ Create player. Player implements:
+  - inventory,
+  - automatic picking of items by default,
+  - health (can be hurt by enemies),
+  - equipping weapon (a special item can be equipped and used to hurt enemies),
+  - footsteps
+  - and some other nice stuff.
+  - Player.Navigation is also automatically configured as Viewport.Navigation
+    and it follows level's properties like PreferredHeight (from level's
+    NavigationInfo.avatarSize). }
+procedure CreatePlayer;
+
+  procedure SetupThirdPersonNavigation;
+  var
+    Avatar: TCastleScene;
+  begin
+    Player.UseThirdPerson := true;
+
+    // RenderOnTop makes sense only for 1st-person camera
+    Player.RenderOnTop := false;
+
+    // TPlayer already created Avatar instance for us, just use it
+    Avatar := Player.ThirdPersonNavigation.Avatar;
+    Avatar.Load('castle-data:/avatar/avatar.gltf');
+
+    { Make Player collide using a sphere.
+      Sphere is more useful than default bounding box for avatars and creatures
+      that move in the world, look ahead, can climb stairs etc. }
+    Player.MiddleHeight := 0.9;
+    Player.CollisionSphereRadius := 0.5;
+
+    { Gravity means that object tries to maintain a constant height
+      (Player.PreferredHeight) above the ground.
+      GrowSpeed means that object raises properly (makes walking up the stairs work).
+      FallSpeed means that object falls properly (makes walking down the stairs,
+      falling down pit etc. work). }
+    Player.Gravity := true;
+    Player.GrowSpeed := 10.0;
+    Player.FallSpeed := 10.0;
+
+    Player.ThirdPersonNavigation.Input_CameraCloser.Assign(keyNone, keyNone, '', false, buttonLeft, mwUp);
+    Player.ThirdPersonNavigation.Input_CameraFurther.Assign(keyNone, keyNone, '', false, buttonLeft, mwDown);
+    Player.ThirdPersonNavigation.CrouchSpeed := 2;
+    Player.ThirdPersonNavigation.MoveSpeed := 4;
+    Player.ThirdPersonNavigation.RunSpeed := 8;
+  end;
+
+begin
+  FreeAndNil(Player);
+
+  Player := TPlayer.Create(Application);
+
+  { Use this to enable 3rd-person camera }
+  //SetupThirdPersonNavigation;
+
+  Level.Player := Player;
+
+  if Buttons <> nil then
+    Buttons.ToggleMouseLookButton.Pressed := false;
+end;
+
 { Window callbacks ----------------------------------------------------------- }
 
 procedure Press(Container: TUIContainer; const Event: TInputPressRelease);
@@ -371,6 +457,8 @@ begin
     Buttons.AddCreatureButtonClick(nil) else
   if Event.IsKey(keyF10) then
     Buttons.AddItemButtonClick(nil);
+  if Event.IsKey(keyF1) then
+    CreatePlayer;
 end;
 
 { Customized item ------------------------------------------------------------ }
@@ -455,42 +543,6 @@ end;
 { Initialize the game.
   This is assigned to Application.OnInitialize, and will be called only once. }
 procedure ApplicationInitialize;
-
-  procedure SetupThirdPersonNavigation;
-  var
-    Avatar: TCastleScene;
-  begin
-    Player.UseThirdPerson := true;
-
-    // RenderOnTop makes sense only for 1st-person camera
-    Player.RenderOnTop := false;
-
-    // TPlayer already created Avatar instance for us, just use it
-    Avatar := Player.ThirdPersonNavigation.Avatar;
-    Avatar.Load('castle-data:/avatar/avatar.gltf');
-
-    { Make Player collide using a sphere.
-      Sphere is more useful than default bounding box for avatars and creatures
-      that move in the world, look ahead, can climb stairs etc. }
-    Player.MiddleHeight := 0.9;
-    Player.CollisionSphereRadius := 0.5;
-
-    { Gravity means that object tries to maintain a constant height
-      (Player.PreferredHeight) above the ground.
-      GrowSpeed means that object raises properly (makes walking up the stairs work).
-      FallSpeed means that object falls properly (makes walking down the stairs,
-      falling down pit etc. work). }
-    Player.Gravity := true;
-    Player.GrowSpeed := 10.0;
-    Player.FallSpeed := 10.0;
-
-    Player.ThirdPersonNavigation.Input_CameraCloser.Assign(keyNone, keyNone, '', false, mbLeft, mwUp);
-    Player.ThirdPersonNavigation.Input_CameraFurther.Assign(keyNone, keyNone, '', false, mbLeft, mwDown);
-    Player.ThirdPersonNavigation.CrouchSpeed := 2;
-    Player.ThirdPersonNavigation.MoveSpeed := 4;
-    Player.ThirdPersonNavigation.RunSpeed := 8;
-  end;
-
 begin
   { Turn on some engine optimizations not enabled by default.
     TODO: In the future they should be default, and these variables should be ignored.
@@ -580,7 +632,7 @@ begin
   PlayerInput_DropItem.Assign(keyR);
   if not ApplicationProperties.TouchDevice then
     // allow shooting by clicking or pressing Ctrl key
-    PlayerInput_Attack.Assign(keyCtrl, keyNone, '', true, mbLeft);
+    PlayerInput_Attack.Assign(keyCtrl, keyNone, '', true, buttonLeft);
 
   { Allow using type="MedKit" inside resource.xml files,
     to define our MedKit item. }
@@ -602,14 +654,8 @@ begin
     - and some other nice stuff.
     - Player.Navigation is also automatically configured as Viewport.Navigation
       and it follows level's properties like PreferredHeight (from level's
-      NavigationInfo.avatarSize).
-
-    We must assign Level.Player before Level.Load. }
-  Player := TPlayer.Create(Application);
-  Level.Player := Player;
-
-  { Use this to enable 3rd-person camera }
-  // SetupThirdPersonNavigation;
+      NavigationInfo.avatarSize). }
+  CreatePlayer;
 
   { Load initial level.
     This loads and adds 3D model of your level to the 3D world

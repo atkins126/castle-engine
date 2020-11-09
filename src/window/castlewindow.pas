@@ -1043,9 +1043,9 @@ type
         MakeCurrent
         EventPress/EventRelease }
     procedure DoMouseDown(const Position: TVector2;
-      Button: CastleKeysMouse.TMouseButton; const FingerIndex: TFingerIndex = 0);
+      Button: TCastleMouseButton; const FingerIndex: TFingerIndex = 0);
     procedure DoMouseUp(const Position: TVector2;
-      Button: CastleKeysMouse.TMouseButton; const FingerIndex: TFingerIndex = 0;
+      Button: TCastleMouseButton; const FingerIndex: TFingerIndex = 0;
       const TrackReleased: boolean = true);
     procedure DoMouseWheel(const Scroll: Single; const Vertical: boolean);
     procedure DoTimer;
@@ -1874,12 +1874,8 @@ type
       no MenuItem.DoClick and no OnMenuClick will be called,
       but instead normal EventPress (OnPress) will be called.
 
-      When it is useful to set this to false?
-      For example hen using CastleWindowModes. When you're changing modes (e.g. at the
-      beginning of CastleMessages.MessageOk) you're temporary setting
-      OnMenuClick to nil, but this doesn't block TMenuItem.DoClick
-      functions. The only way to block menu from triggering ANY event is to
-      set this to MainMenu.Enabled to @false. }
+      Disabling MainMenu is useful e.g. during modal dialog box, like @link(MessageOk).
+      This way you can force use to interact with the modal box. }
     property MainMenu: TMenu read FMainMenu write SetMainMenu;
 
     { Is MainMenu visible. @false means that we do not show main menu bar,
@@ -1905,7 +1901,7 @@ type
 
     { Mouse buttons currently pressed.
       See @link(TUIContainer.MousePressed) for details. }
-    function MousePressed: TMouseButtons;
+    function MousePressed: TCastleMouseButtons;
 
     { Is the window focused now, which means that keys/mouse events
       are directed to this window. }
@@ -1953,14 +1949,14 @@ type
       which means we are between an @link(Open) and @link(Close) calls. }
     function GLInitialized: boolean;
 
-    { Create the window with associated OpenGL context and show it.
+    { Create the window with associated rendering context and show it.
 
       @unorderedList(
-        @item(Create window, it's OpenGL area, optionally it's menu.)
-        @item(Create OpenGL context associated with it's OpenGL area.)
+        @item(Create window with a rendering area, optionally with a menu bar.)
+        @item(Create rendering context.)
         @item(Show the window.)
-        @item(Call GLInformationInitialize to initialize GLVersion,
-          GLUVersion, GLFeatures, show them in log.)
+        @item(Call @link(GLInformationInitialize) to initialize @link(GLVersion), @link(GLFeatures),
+          show them in log (https://castle-engine.io/manual_log.php).)
 
         @item(Initial events called:
           @unorderedList(
@@ -1968,8 +1964,8 @@ type
             @item Call MakeCurrent, EventOpen (OnOpen)
             @item Call MakeCurrent, EventResize (OnResize)
             @item(Call MakeCurrent once again, to be sure that after Open
-              active OpenGL context is the one associated with newly created
-              window (in case you would change active OpenGL context inside
+              active rendering context is the one associated with newly created
+              window (in case you would change active rendering context inside
               EventResize (OnResize), which is allowed).)
           )
         )
@@ -2764,11 +2760,8 @@ type
           Application.ProcessMessages(...);
       #)
 
-      Often this is used together with TGLMode, TGLModeFrozenScreen
-      and similar utilities from CastleWindowModes unit.
-      They allow you to temporarily replace window callbacks with new ones,
-      and later restore the original ones.
-      This is useful for behavior similar to modal dialog boxes.
+      This can used to implement routines that wait until a modal dialog box
+      returns, like @link(MessageOK) or @link(MessageYesNo).
 
       For comfort, returns @code(not Terminated).
       So it returns @true if we should continue, that is
@@ -3353,7 +3346,7 @@ end;
 procedure TCastleWindowBase.ReleaseAllKeysAndMouse;
 var
   k: TKey;
-  mb: CastleKeysMouse.TMouseButton;
+  mb: TCastleMouseButton;
   {$ifdef CASTLE_WINDOW_USE_PRIVATE_MODIFIERS_DOWN}
   mk: TModifierKey;
   b: boolean;
@@ -3617,7 +3610,7 @@ begin
 end;
 
 procedure TCastleWindowBase.DoMouseDown(const Position: TVector2;
-  Button: CastleKeysMouse.TMouseButton; const FingerIndex: TFingerIndex);
+  Button: TCastleMouseButton; const FingerIndex: TFingerIndex);
 var
   Event: TInputPressRelease;
 begin
@@ -3634,7 +3627,7 @@ begin
 end;
 
 procedure TCastleWindowBase.DoMouseUp(const Position: TVector2;
-  Button: CastleKeysMouse.TMouseButton; const FingerIndex: TFingerIndex;
+  Button: TCastleMouseButton; const FingerIndex: TFingerIndex;
   const TrackReleased: boolean);
 var
   Event: TInputPressRelease;
@@ -4599,7 +4592,7 @@ begin
   Result := FTouches.Count;
 end;
 
-function TCastleWindowBase.MousePressed: TMouseButtons;
+function TCastleWindowBase.MousePressed: TCastleMouseButtons;
 begin
   Result := Container.MousePressed;
 end;

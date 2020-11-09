@@ -1090,6 +1090,8 @@ begin
   FFallDamageScaleMin := DefaultFallDamageScaleMin;
   FFallDamageScaleMax := DefaultFallDamageScaleMax;
   FFallSound := SoundEngine.SoundFromName(DefaultFallSoundName, false);
+  ScaleMin := 1;
+  ScaleMax := 1;
 end;
 
 procedure TCreatureResource.LoadFromFile(ResourceConfig: TCastleConfig);
@@ -1161,6 +1163,7 @@ begin
     to sensibly use the creature }
   Result.Level := ALevel;
   Result.FResource := Self;
+  Result.Orientation := Orientation; // must be set before SetView
   Result.SetView(APosition, ADirection, RootTransform.GravityUp, FlexibleUp);
   Result.Life := MaxLife;
   Result.KnockBackSpeed := KnockBackSpeed;

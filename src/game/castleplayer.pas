@@ -93,6 +93,7 @@ type
       FRenderDebug: boolean;
 
       FEquippedWeapon: TItemWeapon;
+      FEquippedWeaponResourceFrame: TResourceFrame;
 
       { If Swimming = psUnderWater, then this is the time (from LifeTime)
         of setting Swimming to psUnderWater. }
@@ -156,7 +157,6 @@ type
       FSwimSoundPause: Single;
       FEnableNavigationDragging: boolean;
       FFallingEffect: boolean;
-      CurrentEquippedScene: TCastleScene;
       FWalkNavigation: TCastleWalkNavigation;
       FThirdPersonNavigation: TCastleThirdPersonNavigation;
       FUseThirdPerson: Boolean;
@@ -632,6 +632,9 @@ begin
 
   FDebugTransform := TDebugTransform.Create(Self);
   FDebugTransform.Parent := Self;
+
+  FEquippedWeaponResourceFrame := TResourceFrame.Create(Self);
+  Add(FEquippedWeaponResourceFrame);
 end;
 
 destructor TPlayer.Destroy;
@@ -777,15 +780,7 @@ begin
   if Value <> FEquippedWeapon then
   begin
     if FEquippedWeapon <> nil then
-    begin
-      { clear CurrentEquippedScene }
-      if CurrentEquippedScene <> nil then
-      begin
-        Remove(CurrentEquippedScene);
-        CurrentEquippedScene := nil;
-      end;
       FEquippedWeapon.RemoveFreeNotification(Self);
-    end;
 
     FEquippedWeapon := Value;
 
@@ -990,25 +985,6 @@ end;
 
 procedure TPlayer.Update(const SecondsPassed: Single; var RemoveMe: TRemoveType);
 
-  procedure UpdateCurrentEquippedScene;
-  var
-    NewEquippedScene: TCastleScene;
-  begin
-    if EquippedWeapon <> nil then
-      NewEquippedScene := EquippedWeapon.EquippedScene(LifeTime)
-    else
-      NewEquippedScene := nil;
-
-    if CurrentEquippedScene <> NewEquippedScene then
-    begin
-      if CurrentEquippedScene <> nil then
-        Remove(CurrentEquippedScene);
-      CurrentEquippedScene := NewEquippedScene;
-      if CurrentEquippedScene <> nil then
-        Add(CurrentEquippedScene);
-    end;
-  end;
-
   { Perform various things related to player swimming. }
   procedure UpdateSwimming;
   begin
@@ -1197,8 +1173,6 @@ begin
 
   SynchronizeFromNavigation;
 
-  UpdateCurrentEquippedScene;
-
   if FFlyingTimeOut > 0 then
   begin
     FFlyingTimeOut := FFlyingTimeOut - SecondsPassed;
@@ -1218,7 +1192,11 @@ begin
 
   if (EquippedWeapon <> nil) and
      (InternalLevel <> nil) then
-    EquippedWeapon.EquippedUpdate(InternalLevel, LifeTime);
+  begin
+    FEquippedWeaponResourceFrame.Exists := true;
+    EquippedWeapon.EquippedUpdate(InternalLevel, SecondsPassed, FEquippedWeaponResourceFrame);
+  end else
+    FEquippedWeaponResourceFrame.Exists := false;
 
   UpdateIsOnTheGround;
   UpdateToxic;
@@ -1279,9 +1257,12 @@ procedure TPlayer.Attack;
 begin
   if (EquippedWeapon <> nil) and
      (InternalLevel <> nil) then
-    EquippedWeapon.EquippedAttack(InternalLevel, LifeTime)
+    EquippedWeapon.EquippedAttack(InternalLevel)
   else
-    { TODO: allow to do some "punch" / "kick" here easily }
+    { Cannot attack without weapon equipped.
+      If the game will want to have some "always owned weapon"
+      (like footkick in Duke, crowbar in HalfLife)
+      that game will have to assign it to EquippedWeapon. }
     Notifications.Show('No weapon equipped');
 end;
 
@@ -1622,18 +1603,18 @@ initialization
   PlayerInput_Crouch.Assign(keyC);
 
   PlayerInput_Attack := TInputShortcut.Create(nil, 'Attack', 'attack', igBasic);
-  PlayerInput_Attack.Assign(keyCtrl, keyNone, '', false, mbLeft);
+  PlayerInput_Attack.Assign(keyCtrl, keyNone, '', false, buttonLeft);
   PlayerInput_Attack.GroupOrder := -100; { before other (player) shortcuts }
   PlayerInput_InventoryShow := TInputShortcut.Create(nil, 'Inventory show / hide', 'inventory_toggle', igItems);
-  PlayerInput_InventoryShow.Assign(keyNone, keyNone, '', false, mbLeft);
+  PlayerInput_InventoryShow.Assign(keyNone, keyNone, '', false, buttonLeft);
   PlayerInput_InventoryPrevious := TInputShortcut.Create(nil, 'Select previous item', 'inventory_previous', igItems);
-  PlayerInput_InventoryPrevious.Assign(keyLeftBracket, keyNone, '', false, mbLeft, mwUp);
+  PlayerInput_InventoryPrevious.Assign(keyLeftBracket, keyNone, '', false, buttonLeft, mwUp);
   PlayerInput_InventoryNext := TInputShortcut.Create(nil, 'Select next item', 'inventory_next', igItems);
-  PlayerInput_InventoryNext.Assign(keyRightBracket, keyNone, '', false, mbLeft, mwDown);
+  PlayerInput_InventoryNext.Assign(keyRightBracket, keyNone, '', false, buttonLeft, mwDown);
   PlayerInput_UseItem := TInputShortcut.Create(nil, 'Use (or equip) selected item', 'item_use', igItems);
-  PlayerInput_UseItem.Assign(keyEnter, keyNone, '', false, mbLeft);
+  PlayerInput_UseItem.Assign(keyEnter, keyNone, '', false, buttonLeft);
   PlayerInput_DropItem := TInputShortcut.Create(nil, 'Drop selected item', 'item_drop', igItems);
-  PlayerInput_DropItem.Assign(keyNone, keyNone, '', false, mbLeft);
+  PlayerInput_DropItem.Assign(keyNone, keyNone, '', false, buttonLeft);
   PlayerInput_CancelFlying := TInputShortcut.Create(nil, 'Cancel flying spell', 'cancel_flying', igOther);
-  PlayerInput_CancelFlying.Assign(keyNone, keyNone, '', false, mbLeft);
+  PlayerInput_CancelFlying.Assign(keyNone, keyNone, '', false, buttonLeft);
 end.

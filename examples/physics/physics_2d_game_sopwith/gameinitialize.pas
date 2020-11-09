@@ -23,7 +23,7 @@ implementation
 uses SysUtils, Classes, Generics.Collections,
   CastleWindow, CastleLog, CastleScene, CastleControls, X3DNodes, CastleTransform,
   CastleFilesUtils, CastleSceneCore, CastleKeysMouse, CastleColors,
-  CastleCameras, CastleVectors, CastleRenderer, CastleBoxes, CastleViewport,
+  CastleCameras, CastleVectors, CastleBoxes, CastleViewport,
   CastleUIControls, CastleTimeUtils, CastleUtils, CastleApplicationProperties;
 
 { Global variables ----------------------------------------------------------- }
@@ -279,13 +279,13 @@ end;
 
 procedure WindowPress(Container: TUIContainer; const Event: TInputPressRelease);
 begin
-  if Event.IsMouseButton(mbLeft) then
+  if Event.IsMouseButton(buttonLeft) then
     UpdatePlanePosition(Event.Position);
 end;
 
 procedure WindowMotion(Container: TUIContainer; const Event: TInputMotion);
 begin
-  if mbLeft in Event.Pressed then
+  if buttonLeft in Event.Pressed then
     UpdatePlanePosition(Event.Position);
 end;
 

@@ -23,7 +23,7 @@ implementation
 uses SysUtils, Classes, Generics.Collections,
   CastleWindow, CastleScene, CastleControls, CastleLog, X3DNodes, CastleTransform,
   CastleFilesUtils, CastleSceneCore, CastleKeysMouse, CastleColors,
-  CastleCameras, CastleVectors, CastleRenderer, CastleBoxes, CastleViewport,
+  CastleCameras, CastleVectors, CastleBoxes, CastleViewport,
   CastleUIControls, CastleApplicationProperties;
 
 var
@@ -63,7 +63,7 @@ begin
   Level.Load(URL);
   Level.Spatial := [ssRendering, ssDynamicCollisions];
   Level.ProcessEvents := true;
-  Level.Attributes.PhongShading := true; // nicer lighting
+  Level.RenderOptions.PhongShading := true; // nicer lighting
 
   LevelBody := TRigidBody.Create(Level);
   LevelBody.Dynamic := false;
@@ -195,7 +195,7 @@ begin
   if Event.IsKey(keyF6) then
     Viewport.Items.EnablePhysics := not Viewport.Items.EnablePhysics;
 
-  if Event.IsMouseButton(mbLeft) then
+  if Event.IsMouseButton(buttonLeft) then
   begin
     RigidBody := TRigidBody.Create(BoxTemplate);
 
@@ -206,7 +206,7 @@ begin
     Spawn(BoxTemplate, BoxCollider, RigidBody);
   end;
 
-  if Event.IsMouseButton(mbRight) then
+  if Event.IsMouseButton(buttonRight) then
   begin
     RigidBody := TRigidBody.Create(SphereTemplate);
 
