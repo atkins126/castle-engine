@@ -1,5 +1,5 @@
 {
-  Copyright 2003-2018 Michalis Kamburelis.
+  Copyright 2003-2020 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -26,7 +26,7 @@ uses SysUtils, Classes, Generics.Collections, Contnrs, Kraft,
   CastleVectors, CastleBoxes, CastleTriangles, X3DFields, X3DNodes,
   CastleClassUtils, CastleUtils, CastleShapes, CastleInternalTriangleOctree,
   CastleProgress, CastleInternalOctree, CastleInternalShapeOctree,
-  CastleKeysMouse, X3DTime, CastleCameras, X3DTriangles,
+  CastleKeysMouse, X3DTime, CastleCameras, X3DTriangles, CastleTimeUtils,
   CastleTransform, CastleInternalShadowMaps, CastleProjection;
 
 type
@@ -523,7 +523,8 @@ type
     FShadowMaps: boolean;
     FShadowMapsDefaultSize: Cardinal;
     ScheduleHeadlightOnFromNavigationInfoInChangedAll: boolean;
-    LastUpdateFrameId: Int64;
+    LastUpdateFrameId: TFrameId;
+    LastCameraStateId: TFrameId;
     FDefaultAnimationTransition: Single;
 
     { All InternalUpdateCamera calls will disable smooth (animated)
@@ -761,7 +762,8 @@ type
 
     { Mechanism to schedule ChangedAll and GeometryChanged calls. }
     ChangedAllSchedule: Cardinal;
-    ChangedAllScheduled: boolean;
+    ChangedAllScheduled: Boolean;
+    ChangedAllScheduledOnlyAdditions: Boolean;
 
     ChangedAllCurrentViewpointIndex: Cardinal;
     FInitialViewpointIndex: Cardinal;
@@ -925,10 +927,6 @@ type
     function GetCameraLocal(out CameraVectors: TCameraVectors): boolean;
     function GetCameraLocal(out CameraLocalPosition: TVector3): boolean;
 
-    { Update various X3D nodes using the camera position/direction/up,
-      like LOD, Billboard, ProximitySensor. }
-    procedure UpdateCameraEvents;
-
     function PointingDevicePressRelease(const DoPress: boolean;
       const Distance: Single; const CancelAction: boolean): boolean;
   protected
@@ -957,7 +955,14 @@ type
 
     procedure UpdateHeadlightOnFromNavigationInfo;
 
-    procedure InvalidateBackground; virtual;
+    { Camera changed.
+      In this class this updates various X3D nodes using the camera position/direction/up,
+      like LOD, Billboard, ProximitySensor.
+      @exclude }
+    procedure InternalCameraChanged; virtual;
+
+    { Background node changed. @exclude }
+    procedure InternalInvalidateBackground; virtual;
 
     property VisibilitySensors: TVisibilitySensors read FVisibilitySensors;
 
@@ -1232,7 +1237,7 @@ type
 
       ChangedAll calls BeforeNodesFree(true) first, for safety (and TGLShape
       actually depends on it, see implementation comments). }
-    procedure ChangedAll; override;
+    procedure ChangedAll(const OnlyAdditions: Boolean = false); override;
 
     { Notify scene that you changed the value of given field.
       @bold(This method is internal, it should be used only by TX3DField
@@ -1255,7 +1260,7 @@ type
       detect what this change implicates for this VRML/X3D scene.
 
       @exclude }
-    procedure InternalChangedField(Field: TX3DField); override;
+    procedure InternalChangedField(const Field: TX3DField; const Change: TX3DChange); override;
 
     { Notification when geometry changed.
       "Geometry changed" means that the positions
@@ -1334,7 +1339,7 @@ type
       immediately call ChangedAll.
 
       @groupBegin }
-    procedure ScheduleChangedAll;
+    procedure ScheduleChangedAll(const OnlyAdditions: Boolean = false);
     procedure BeginChangesSchedule;
     procedure EndChangesSchedule;
     { @groupEnd }
@@ -1520,6 +1525,8 @@ type
     procedure UnregisterScene(Node: TX3DNode);
       deprecated 'use Node.UnregisterScene';
 
+    { Scene processes X3D key sensor nodes here, https://castle-engine.io/x3d_implementation_keydevicesensor.php .
+      Remember to set ListenPressRelease to process the key sensor nodes. }
     function Press(const Event: TInputPressRelease): boolean; override;
     function Release(const Event: TInputPressRelease): boolean; override;
 
@@ -1721,18 +1728,6 @@ type
     function CameraUp: TVector3; deprecated 'do not access camera properties this way, instead use e.g. Viewport.Camera.GetView';
     function CameraViewKnown: boolean; deprecated 'do not access camera properties this way, instead use e.g. Viewport.Camera';
 
-    { Call when camera position/dir/up changed, to update things depending
-      on camera settings. This includes sensors like ProximitySensor,
-      LOD nodes, camera settings for next RenderedTexture update and more.
-
-      @bold(There should be no need to call this method explicitly.
-      The scene is notified about camera changes automatically,
-      by the @link(TCastleViewport). This method may be renamed / removed
-      in future releases.)
-
-      @exclude }
-    procedure CameraChanged(const ACamera: TCastleCamera); override;
-
     { List of handlers for VRML/X3D Script node with "compiled:" protocol.
       This is read-only, change this only by RegisterCompiledScript. }
     property CompiledScriptHandlers: TCompiledScriptHandlerInfoList
@@ -1891,7 +1886,7 @@ type
       @italic(Current implementation notes:)
 
       Currently, this is used by TCastleScene if you use
-      @link(RenderOptions.OcclusionQuery TCastleRenderOptions.OcclusionQuery).
+      @link(TCastleRenderOptions.OcclusionQuery RenderOptions.OcclusionQuery).
       Normally, occlusion query tries to reuse results from previous
       frame, using the assumption that usually camera changes slowly
       and objects appear progressively in the view. When you make
@@ -1902,8 +1897,6 @@ type
 
     procedure PrepareResources(const Options: TPrepareResourcesOptions;
       const ProgressStep: boolean; const Params: TPrepareParams); override;
-
-    function Dragging: boolean; override;
 
     { Static scene will not be automatically notified about the changes
       to the field values. This means that TX3DField.Send and
@@ -1947,11 +1940,18 @@ type
     function Event(const NodeName, EventName: string): TX3DEvent;
     { @groupEnd }
 
-    { List the names of available animations in this file.
-      Animations are detected in VRML/X3D models as simply TimeSensor nodes
-      (if you set @link(AnimationPrefix) property, we additionally
-      filter them to show only the names starting with given prefix).
-      You can even get the time sensor node directly by AnimationTimeSensor.
+    { List the names of available animations in current scene.
+      Animations are detected looking for TimeSensor nodes.
+      See https://castle-engine.io/x3d_implementation_interpolation.php
+      for an overview how nodes are used to create animations.
+
+      Note that if you set @link(AnimationPrefix) property, we additionally
+      filter TimeSensor nodes to show only the names starting with given prefix.
+      In this case, not all TTimeSensorNode are reflected in this list.
+
+      You can get the corresponding TTimeSensorNode by AnimationTimeSensor.
+      Note that the same TTimeSensorNode may occur multiple times on this list,
+      in case X3D IMPORT mechanism was used to rename the imported animation.
 
       The resulting TStringList instance is owned by this object,
       do not free it.
@@ -2530,7 +2530,7 @@ implementation
 
 uses Math, DateUtils,
   X3DCameraUtils, CastleStringUtils, CastleLog,
-  X3DLoad, CastleURIUtils, CastleTimeUtils, CastleQuaternions;
+  X3DLoad, CastleURIUtils, CastleQuaternions;
 
 {$define read_implementation}
 {$I castlescenecore_physics.inc}
@@ -2808,8 +2808,9 @@ begin
       { The same generated texture node Tex is instantiated more than once.
 
         - For GeneratedShadowMap, the shape where it's used, and actually
-          the whole place where it's used in the VRML graph, doesn't matter.
-          (GeneratedShadowMap makes view from it's light).
+          the whole place where it's used in the X3D graph, doesn't matter.
+          (GeneratedShadowMap makes view from it's light/viewpoint,
+          referenced explicitly in the node).
           Same thing for RenderedTexture (it makes view from specified viewpoint).
 
           So we can simply ignore duplicates (placing them
@@ -2827,7 +2828,7 @@ begin
 
       if (Tex is TGeneratedCubeMapTextureNode) and
          (Shape <> GenTex^.Shape) then
-        WritelnWarning('X3D', 'The same GeneratedCubeMapTexture node is used (instanced) within at least two different VRML shapes. This is bad, as we don''t know from which shape should environment be captured');
+        WritelnWarning('X3D', 'The same GeneratedCubeMapTexture node is used (instanced) within at least two different X3D shapes. This is incorrect, as we don''t know from which shape should environment be captured');
     end else
     begin
       GenTex := Add;
@@ -2841,10 +2842,10 @@ begin
         GenTex^.Handler := TRenderedTextureNode(Tex).GeneratedTextureHandler else
         raise EInternalError.Create('sf34234');
 
-      { Make sure to reset UpdateNeeded to true, in case it was false because
+      { Make sure to reset InternalUpdateNeeded to true, in case it was false because
         it was already generated but now some change caused ChangedAll.
         Testcase: projected_Spotlight.x3dv from Victor Amat. }
-      GenTex^.Handler.UpdateNeeded := true;
+      GenTex^.Handler.InternalUpdateNeeded := true;
       GenTex^.Shape := Shape;
     end;
   end;
@@ -2857,7 +2858,7 @@ begin
   for I := 0 to Count - 1 do
     if (List^[I].TextureNode is TGeneratedShadowMapNode) and
        (TGeneratedShadowMapNode(List^[I].TextureNode).FdLight.Value = LightNode) then
-      List^[I].Handler.UpdateNeeded := true;
+      List^[I].Handler.InternalUpdateNeeded := true;
 end;
 
 { TTimeDependentHandlerList ------------------------------------------------- }
@@ -3898,6 +3899,8 @@ begin
       fvMainLightForShadows];
 
     DoGeometryChanged(gcActiveShapesChanged, nil);
+
+    InternalIncShapesHash; // TShapeTreeLOD returns now different things
   end;
 end;
 
@@ -3994,7 +3997,7 @@ begin
   end;
 end;
 
-procedure TCastleSceneCore.ChangedAll;
+procedure TCastleSceneCore.ChangedAll(const OnlyAdditions: Boolean);
 
   { Add where necessary lights with scope = global. }
   procedure AddGlobalLights;
@@ -4092,7 +4095,12 @@ begin
   try
 
   if LogChanges then
-    WritelnLog('X3D changes', 'ChangedAll');
+    WritelnLog('X3D changes', 'ChangedAll (OnlyAdditions: %s)', [BoolToStr(OnlyAdditions, true)]);
+
+  { TODO:
+    We ignore OnlyAdditions now.
+    We have to even do BeforeNodesFree always, even when OnlyAdditions,
+    the code below (may) assume it is always done, e.g. all lists are cleared in BeforeNodesFree. }
 
   BeforeNodesFree(true);
 
@@ -4720,10 +4728,9 @@ begin
     VisibleChangeHere([vcVisibleGeometry, vcVisibleNonGeometry]);
 end;
 
-procedure TCastleSceneCore.InternalChangedField(Field: TX3DField);
+procedure TCastleSceneCore.InternalChangedField(const Field: TX3DField; const Change: TX3DChange);
 var
   ANode: TX3DNode;
-  Change: TX3DChange;
 
   procedure DoLogChanges(const Additional: string = '');
   var
@@ -4785,7 +4792,7 @@ var
     end;
   end;
 
-  procedure HandleChangeNormal;
+  procedure HandleChangeNormalTangent;
   var
     C, I: Integer;
   begin
@@ -5154,7 +5161,7 @@ var
       Handler := TRenderedTextureNode(ANode).GeneratedTextureHandler else
       Exit;
 
-    Handler.UpdateNeeded := true;
+    Handler.InternalUpdateNeeded := true;
     VisibleChangeHere([]);
   end;
 
@@ -5180,10 +5187,10 @@ var
     end;
   end;
 
-  procedure HandleChangeEverything;
+  procedure HandleChangeEverything(const OnlyAdditions: Boolean = false);
   begin
     { An arbitrary change occurred. }
-    ScheduleChangedAll;
+    ScheduleChangedAll(OnlyAdditions);
   end;
 
   { Handle Change in [chVisibleGeometry, chVisibleNonGeometry, chRedisplay] }
@@ -5239,7 +5246,7 @@ var
 
   procedure HandleChangeBackground;
   begin
-    InvalidateBackground;
+    InternalInvalidateBackground;
     VisibleChangeHere([vcVisibleNonGeometry]);
   end;
 
@@ -5265,11 +5272,9 @@ var
     VisibleChangeHere([vcVisibleNonGeometry]);
   end;
 
-  procedure HandleChangeChildren;
+  procedure HandleChangeChildren(const OnlyAdditions: Boolean);
   begin
-    if LogChanges then
-      WritelnLog('TODO: Children change (add/remove) is not optimized yet, but could be. Report if you need it.');
-    HandleChangeEverything;
+    HandleChangeEverything(OnlyAdditions);
   end;
 
   procedure HandleChangeBBox;
@@ -5296,7 +5301,7 @@ begin
   ANode := TX3DNode(Field.ParentNode);
   Assert(ANode <> nil);
 
-  { We used to check here RootNode.IsNodePresent, to eliminate
+  { We used to check here RootNode.IsNodePresent(ANode), to eliminate
     changes to nodes not in our graph. This is not done now, because:
 
     1. This check is not usually needed, and usually it wastes quite
@@ -5311,8 +5316,6 @@ begin
        by Proxy methods (geometry and new state nodes).
   }
 
-  Change := Field.ExecuteChange;
-
   if LogChanges then
     DoLogChanges;
 
@@ -5325,7 +5328,7 @@ begin
     case Change of
       chTransform: HandleChangeTransform;
       chCoordinate: HandleChangeCoordinate;
-      chNormal: HandleChangeNormal;
+      chNormal, chTangent: HandleChangeNormalTangent;
       chVisibleVRML1State, chGeometryVRML1State: HandleVRML1State;
       chAlphaChannel: HandleChangeAlphaChannel;
       chLightInstanceProperty: HandleChangeLightInstanceProperty;
@@ -5354,7 +5357,7 @@ begin
       chEverything: HandleChangeEverything;
       chShadowMaps: HandleChangeShadowMaps;
       chWireframe: HandleChangeWireframe;
-      chChildren: HandleChangeChildren;
+      chGroupChildren, chGroupChildrenAdd: HandleChangeChildren(Change = chGroupChildrenAdd);
       chBBox: HandleChangeBBox;
       chVisibleGeometry, chVisibleNonGeometry, chRedisplay: HandleVisibleChange;
       else ;
@@ -6006,7 +6009,7 @@ begin
         - position/orientation_changed events on ProximitySensors,
         - update camera information on all Billboard nodes,
         - LOD nodes. }
-      UpdateCameraEvents;
+      InternalCameraChanged;
     end else
     begin
       ScriptsFinalize;
@@ -6320,6 +6323,16 @@ function TCastleSceneCore.PointingDevicePress(const Pick: TRayCollisionNode;
 begin
   Result := inherited;
   if Result then Exit;
+
+  { If the Scene was just added to Viewport (and no mouse move occurred),
+    or if the Scene was modified by ChangedAll, e.g. by removing some items
+    (and no mouse move occurred),
+    then PointingDevicePress would not fire for sensors (like TouchSensor)
+    under mouse, because PointingDeviceOverItem is not set.
+    See https://github.com/castle-engine/castle-engine/issues/227 .
+    Using PointingDeviceMove sets PointingDeviceOverItem. }
+  PointingDeviceMove(Pick, Distance);
+
   Result := PointingDevicePressRelease(true, Distance, { ignored } false);
 end;
 
@@ -6439,8 +6452,7 @@ begin
                  IndexOf(ActiveSensor) <> -1) and
                (ActiveSensor is TTouchSensorNode) then
             begin
-              TTouchSensorNode(ActiveSensor).
-                EventTouchTime.Send(Time, NextEventTime);
+              TTouchSensorNode(ActiveSensor).EventTouchTime.Send(Time, NextEventTime);
             end;
           end;
           FPointingDeviceActiveSensors.Count := 0;
@@ -6462,7 +6474,7 @@ begin
         warning that activation was unsuccessful.
 
         Fortunately, our ActiveChanged right now precisely tells us
-        when something happened. Whe not ActiveChanged, nothing happened,
+        when something happened. When not ActiveChanged, nothing happened,
         no X3D event was send. }
       Result := ActiveChanged;
     finally
@@ -6478,6 +6490,8 @@ begin
     Result := nil;
 end;
 
+(*
+// Not needed now
 function TCastleSceneCore.Dragging: boolean;
 
   function ActiveDraggingSensor: boolean;
@@ -6498,6 +6512,7 @@ begin
       ActiveDraggingSensor and
       ProcessEvents);
 end;
+*)
 
 { Time stuff ------------------------------------------------------------ }
 
@@ -6847,6 +6862,88 @@ begin
   Inc(FTimeNow.PlusTicks);
 end;
 
+procedure TCastleSceneCore.InternalCameraChanged;
+
+  { Does CameraProcessing needs to be called (does it actually do anything). }
+  function CameraProcessingNeeded: boolean;
+  begin
+    Result :=
+      (ShapeLODs.Count <> 0) or
+      (ProximitySensors.Count <> 0) or
+      (BillboardNodes.Count <> 0);
+  end;
+
+  { Update things depending on camera information and X3D events.
+    Call it only when ProcessEvents. }
+  procedure CameraProcessing(const CameraVectors: TCameraVectors);
+  var
+    I: Integer;
+  begin
+    Assert(ProcessEvents);
+
+    for I := 0 to ShapeLODs.Count - 1 do
+      UpdateLODLevel(TShapeTreeLOD(ShapeLODs.Items[I]), CameraVectors.Position);
+
+    for I := 0 to ProximitySensors.Count - 1 do
+      ProximitySensorUpdate(ProximitySensors[I], CameraVectors);
+
+    { Update camera information on all Billboard nodes,
+      and retraverse scene from Billboard nodes. So we treat Billboard nodes
+      much like Transform nodes, except that their transformation animation
+      is caused by camera changes, not by changes to field values.
+
+      TODO: If one Billboard is under transformation of another Billboard,
+      this will be a little wasteful. We should update first all camera
+      information, and then update only Billboard nodes that do not have
+      any parent Billboard nodes. }
+    for I := 0 to BillboardNodes.Count - 1 do
+    begin
+      (BillboardNodes[I] as TBillboardNode).InternalCameraChanged(CameraVectors);
+      { Apply transformation change to Shapes tree.
+        Note that we should never call TransformationChanged when
+        OptimizeExtensiveTransformations. }
+      if OptimizeExtensiveTransformations then
+        TransformationDirty := true
+      else
+        TransformationChanged(BillboardNodes[I]);
+    end;
+  end;
+
+var
+  CameraVectors: TCameraVectors;
+begin
+  if World <> nil then // may be called from SetProcessEvents when World may be nil
+    LastCameraStateId := World.InternalMainCameraStateId;
+
+  if ProcessEvents and
+     CameraProcessingNeeded and
+     { call GetCameraLocal only when necessary, as it does some calculations }
+     GetCameraLocal(CameraVectors) then
+  begin
+    BeginChangesSchedule;
+    try
+      CameraProcessing(CameraVectors);
+    finally EndChangesSchedule end;
+  end;
+
+  { handle WatchForTransitionComplete, looking at ACamera.Animation }
+  (* TODO: we don't camera TCamera reference now,
+    - we do not generate EventTransitionComplete now,
+    - we never update WatchForTransitionComplete to false.
+    This is not a critical feature, for X3D authors or Pascal developers.
+
+  if ProcessEvents and WatchForTransitionComplete and not ACamera.Animation then
+  begin
+    BeginChangesSchedule;
+    try
+      WatchForTransitionComplete := false;
+      if NavigationInfoStack.Top <> nil then
+        NavigationInfoStack.Top.EventTransitionComplete.Send(true, NextEventTime);
+    finally EndChangesSchedule end;
+  end;
+  *)
+end;
+
 procedure TCastleSceneCore.Update(const SecondsPassed: Single; var RemoveMe: TRemoveType);
 var
   SP: Single;
@@ -6860,6 +6957,10 @@ begin
   LastUpdateFrameId := TFramesPerSecond.FrameId;
 
   FrameProfiler.Start(fmUpdateScene);
+
+  if (World <> nil) and
+     (LastCameraStateId <> World.InternalMainCameraStateId) then
+    InternalCameraChanged; // sets LastCameraStateId
 
   { Most of the "update" job happens inside InternalSetTime.
     Reasons are partially historiec: TCastlePrecalculatedAnimation
@@ -6992,14 +7093,20 @@ begin
   { ChangedAllScheduled = false always when ChangedAllSchedule = 0. }
   Assert((ChangedAllSchedule <> 0) or (not ChangedAllScheduled));
 
+  ChangedAllScheduledOnlyAdditions := true; // may be changed to false by ScheduleChangedAll
+
   Inc(ChangedAllSchedule);
 end;
 
-procedure TCastleSceneCore.ScheduleChangedAll;
+procedure TCastleSceneCore.ScheduleChangedAll(const OnlyAdditions: Boolean);
 begin
   if ChangedAllSchedule = 0 then
-    ChangedAll else
+    ChangedAll
+  else
+  begin
     ChangedAllScheduled := true;
+    ChangedAllScheduledOnlyAdditions := ChangedAllScheduledOnlyAdditions and OnlyAdditions;
+  end;
 end;
 
 procedure TCastleSceneCore.EndChangesSchedule;
@@ -7008,7 +7115,7 @@ begin
   if (ChangedAllSchedule = 0) and ChangedAllScheduled then
   begin
     { Note that ChangedAll will set ChangedAllScheduled to false. }
-    ChangedAll;
+    ChangedAll(ChangedAllScheduledOnlyAdditions);
   end;
 end;
 
@@ -7101,12 +7208,12 @@ function TCastleSceneCore.GetCameraLocal(
   out CameraVectors: TCameraVectors): boolean;
 begin
   // note that HasWorldTransform implies also World <> nil
-  Result := HasWorldTransform and World.CameraKnown;
+  Result := HasWorldTransform and (World.MainCamera <> nil);
   if Result then
   begin
-    CameraVectors.Position  := WorldInverseTransform.MultPoint    (World.CameraPosition);
-    CameraVectors.Direction := WorldInverseTransform.MultDirection(World.CameraDirection);
-    CameraVectors.Up        := WorldInverseTransform.MultDirection(World.CameraUp);
+    CameraVectors.Position  := WorldInverseTransform.MultPoint    (World.MainCamera.Position);
+    CameraVectors.Direction := WorldInverseTransform.MultDirection(World.MainCamera.Direction);
+    CameraVectors.Up        := WorldInverseTransform.MultDirection(World.MainCamera.Up);
   end;
 end;
 
@@ -7114,9 +7221,9 @@ function TCastleSceneCore.GetCameraLocal(
   out CameraLocalPosition: TVector3): boolean;
 begin
   // note that HasWorldTransform implies also World <> nil
-  Result := HasWorldTransform and World.CameraKnown;
+  Result := HasWorldTransform and (World.MainCamera <> nil);
   if Result then
-    CameraLocalPosition := WorldInverseTransform.MultPoint(World.CameraPosition);
+    CameraLocalPosition := WorldInverseTransform.MultPoint(World.MainCamera.Position);
 end;
 
 procedure TCastleSceneCore.ChangedTransform;
@@ -7126,7 +7233,7 @@ begin
     TODO: This way doesn't make a notification when WorldInverseTransform
     changed because parent transform changed.
     We should look at FWorldTransformAndInverseId changes to detect this? }
-  UpdateCameraEvents;
+  InternalCameraChanged;
 end;
 
 procedure TCastleSceneCore.ChangeWorld(const Value: TCastleAbstractRootTransform);
@@ -7138,9 +7245,6 @@ begin
     when item is part of the world (and knows the camera),
     and has ProcessEvents = true.
 
-    TODO: Maybe we should call CameraChanged here?
-    But we don't have CameraChanged argument.
-
     Testcase:
 
     - 1st frame rendering not using BlendingSort for non-MainScene scenes:
@@ -7151,110 +7255,35 @@ begin
 
   }
   if Value <> nil then
-    UpdateCameraEvents;
+    InternalCameraChanged;
 end;
 
 function TCastleSceneCore.CameraPosition: TVector3;
 begin
+  {$warnings off} // using deprecated from deprecated
   Result := World.CameraPosition;
+  {$warnings on}
 end;
 
 function TCastleSceneCore.CameraDirection: TVector3;
 begin
+  {$warnings off} // using deprecated from deprecated
   Result := World.CameraDirection;
+  {$warnings on}
 end;
 
 function TCastleSceneCore.CameraUp: TVector3;
 begin
+  {$warnings off} // using deprecated from deprecated
   Result := World.CameraUp;
+  {$warnings on}
 end;
 
 function TCastleSceneCore.CameraViewKnown: boolean;
 begin
+  {$warnings off} // using deprecated from deprecated
   Result := (World <> nil) and World.CameraKnown;
-end;
-
-procedure TCastleSceneCore.CameraChanged(const ACamera: TCastleCamera);
-begin
-  inherited;
-  UpdateCameraEvents;
-
-  { handle WatchForTransitionComplete, looking at ACamera.Animation }
-  if ProcessEvents and WatchForTransitionComplete and not ACamera.Animation then
-  begin
-    BeginChangesSchedule;
-    try
-      WatchForTransitionComplete := false;
-      if NavigationInfoStack.Top <> nil then
-        NavigationInfoStack.Top.EventTransitionComplete.Send(true, NextEventTime);
-    finally EndChangesSchedule end;
-  end;
-end;
-
-procedure TCastleSceneCore.UpdateCameraEvents;
-
-  { Does CameraProcessing needs to be called (does it actually do anything). }
-  function CameraProcessingNeeded: boolean;
-  begin
-    Result :=
-      (ShapeLODs.Count <> 0) or
-      (ProximitySensors.Count <> 0) or
-      (BillboardNodes.Count <> 0);
-  end;
-
-  { Update things depending on camera information and X3D events.
-    Call it only when ProcessEvents. }
-  procedure CameraProcessing(const CameraVectors: TCameraVectors);
-  var
-    I: Integer;
-  begin
-    Assert(ProcessEvents);
-
-    // Active and visible shapes possibly changed, if we used LOD nodes and camera changed
-    if ShapeLODs.Count <> 0 then
-      InternalIncShapesHash;
-
-    for I := 0 to ShapeLODs.Count - 1 do
-      UpdateLODLevel(TShapeTreeLOD(ShapeLODs.Items[I]), CameraVectors.Position);
-
-    for I := 0 to ProximitySensors.Count - 1 do
-      ProximitySensorUpdate(ProximitySensors[I], CameraVectors);
-
-    { Update camera information on all Billboard nodes,
-      and retraverse scene from Billboard nodes. So we treat Billboard nodes
-      much like Transform nodes, except that their transformation animation
-      is caused by camera changes, not by changes to field values.
-
-      TODO: If one Billboard is under transformation of another Billboard,
-      this will be a little wasteful. We should update first all camera
-      information, and then update only Billboard nodes that do not have
-      any parent Billboard nodes. }
-    for I := 0 to BillboardNodes.Count - 1 do
-    begin
-      (BillboardNodes[I] as TBillboardNode).CameraChanged(CameraVectors);
-      { Apply transformation change to Shapes tree.
-        Note that we should never call TransformationChanged when
-        OptimizeExtensiveTransformations. }
-      if OptimizeExtensiveTransformations then
-        TransformationDirty := true
-      else
-        TransformationChanged(BillboardNodes[I]);
-    end;
-  end;
-
-var
-  CameraVectors: TCameraVectors;
-begin
-  if ProcessEvents and
-     CameraProcessingNeeded and
-     { call GetCameraLocal only when necessary, as it does some calculations }
-     GetCameraLocal(CameraVectors) then
-  begin
-    BeginChangesSchedule;
-    try
-      CameraProcessing(CameraVectors);
-    finally EndChangesSchedule end;
-  end;
+  {$warnings on}
 end;
 
 { compiled scripts ----------------------------------------------------------- }
@@ -7824,7 +7853,7 @@ begin
     raise EX3DNotFound.CreateFmt('Event name "%s" not found', [EventName]);
 end;
 
-procedure TCastleSceneCore.InvalidateBackground;
+procedure TCastleSceneCore.InternalInvalidateBackground;
 begin
 end;
 
@@ -8030,7 +8059,10 @@ begin
       {$warnings off} // knowingly using deprecated, to keep it working
       Enum.AnimationPrefix := AnimationPrefix;
       {$warnings on}
-      RootNode.EnumerateNodes(TTimeSensorNode, @Enum.Enumerate, true);
+      { OnlyActive = false, to also find animations under inactive Switch clauses.
+        Since the Switch.WhichChoice may change at runtime,
+        while the animations list should stay constant. }
+      RootNode.EnumerateNodes(TTimeSensorNode, @Enum.Enumerate, false);
 
       { recognize named animations also from IMPORTed node names.
         This alllows to import and rename animations, which is useful. }
@@ -8057,7 +8089,8 @@ end;
 function TCastleSceneCore.AnimationTimeSensor(const Index: Integer): TTimeSensorNode;
 begin
   if Between(Index, 0, FAnimationsList.Count - 1) then
-    Result := FAnimationsList.Objects[Index] as TTimeSensorNode else
+    Result := FAnimationsList.Objects[Index] as TTimeSensorNode
+  else
     Result := nil;
 end;
 
@@ -8368,7 +8401,7 @@ function TCastleSceneCore.PropertySection(
   const PropertyName: String): TPropertySection;
 begin
   case PropertyName of
-    'URL', 'ProcessEvents', 'AutoAnimation', 'AutoAnimationLoop', 'DefaultAnimationTransition':
+    'URL', 'ProcessEvents', 'AutoAnimation', 'AutoAnimationLoop', 'DefaultAnimationTransition', 'Spatial':
       Result := psBasic;
     else
       Result := inherited PropertySection(PropertyName);

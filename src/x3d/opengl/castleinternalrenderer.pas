@@ -103,14 +103,7 @@
   )
 
   The renderer uses arrays in GPU-friendly format defined by TGeometryArrays.
-
-  They have the same number of triangles and vertices as
-  calculated by TAbstractGeometryNode.Triangulate,
-  TAbstractGeometryNode.LocalTriangulate,
-  TAbstractGeometryNode.TrianglesCount,
-  TAbstractGeometryNode.VerticesCount (with OverTriangulate = @true).
 }
-
 unit CastleInternalRenderer;
 
 {$I castleconf.inc}
@@ -123,7 +116,7 @@ uses Classes, SysUtils, Generics.Collections,
   CastleInternalX3DLexer, CastleImages, CastleGLUtils, CastleRendererInternalLights,
   CastleGLShaders, CastleGLImages, CastleTextureImages, CastleVideos, X3DTime,
   CastleShapes, CastleGLCubeMaps, CastleClassUtils, CastleCompositeImage,
-  CastleGeometryArrays, CastleArraysGenerator, CastleRendererInternalShader,
+  CastleInternalGeometryArrays, CastleInternalArraysGenerator, CastleRendererInternalShader,
   CastleRendererInternalTextureEnv, CastleBoxes, CastleTransform, CastleRenderOptions;
 
 {$define read_interface}
@@ -214,14 +207,22 @@ type
     References: Cardinal;
 
     { An instance of TGeometryArrays, decomposing this shape geometry.
-      Used to easily render and process this geometry, if assigned.
-      This is managed by TGLRenderer and TCastleScene. }
+      Used to easily render and process this geometry.
+
+      When VBO are supported (all non-ancient GPUs) then TShapeCache
+      uses an instance of it only once (in LoadArraysToVbo,
+      to load contents to GPU, and then calls Arrays.FreeData).
+      But it is later used by outside code multiple times to make draw calls
+      (as it is passed by TBaseCoordinateRenderer).
+      So storing it in TShapeCache (to be shared when possible) makes sense.
+
+      TShapeCache owns this -- it will be freed when TShapeCache is freed. }
     Arrays: TGeometryArrays;
 
-    { What Vbos do we need to reload.
-      Next time (right after creating arrays) we load vbo contents,
-      we'll look at this to know which parts to actually reload to vbo.
-      This is extended at each FreeArrays call. }
+    { What VBOs do we need to reload at next LoadArraysToVbo call.
+      This also implies that content for this VBOs needs to be created,
+      which may mean we need to change Arrays.
+      This is extended at each InvalidateVertexData call. }
     VboToReload: TVboTypes;
 
     Vbo: TVboArrays;
@@ -236,16 +237,9 @@ type
   public
     constructor Create;
     destructor Destroy; override;
-    procedure FreeArrays(const Changed: TVboTypes);
+    procedure InvalidateVertexData(const Changed: TVboTypes);
     { Debug description of this shape cache. }
     function ToString: String; override;
-    { If possible, update the coordinate/normal data in VBO fast.
-
-      This is carefully implemented to do a specific case of TShapeCache.LoadArraysToVbo.
-      It optimizes the case of animating coordinates/normals using CoordinateInterpolator,
-      which is very important to optimize, since that's how glTF skinned animations
-      are done. }
-    function FastCoordinateNormalUpdate(const Coords, Normals: TVector3List): Boolean;
   end;
 
   TShapeCacheList = {$ifdef CASTLE_OBJFPC}specialize{$endif} TObjectList<TShapeCache>;
@@ -441,6 +435,22 @@ type
     { For implementing TextureCoordinateGenerator.mode = "MIRROR-PLANE". }
     MirrorPlaneUniforms: TMirrorPlaneUniforms;
 
+    { Is bump mapping allowed by the current shape.
+      Fully calculated only after InitMeshRenderer, as determining GeneratorClass
+      is needed to set this. }
+    BumpMappingAllowed: Boolean;
+
+    { Is bump mapping used for current shape.
+      Fully calculated only during render, after BumpMappingAllowed is calculated
+      and after textures are applied.
+      This is determined by BumpMappingAllowed,
+      global BumpMapping, and by the texture information for current
+      shape (whether user provided normal map, height map etc.) }
+    BumpMappingUsed: Boolean;
+
+    { Along with Shape.BumpMappingUsed, this is calculated (use only if Shape.BumpMappingUsed). }
+    BumpMappingTextureCoordinatesId: Cardinal;
+
     destructor Destroy; override;
   end;
 
@@ -463,17 +473,6 @@ type
 
     { ------------------------------------------------------------
       Things usable only during Render. }
-
-    { Is bump mapping allowed by the current shape.
-      Fully calculated only after InitMeshRenderer, as determining GeneratorClass
-      is needed to set this. }
-    ShapeBumpMappingAllowed: boolean;
-    { Is bump mapping used for current shape.
-      This is determined by ShapeBumpMappingAllowed,
-      global BumpMapping, and by the texture information for current
-      shape (whether user provided normal map, height map etc.) }
-    ShapeBumpMappingUsed: boolean;
-    ShapeBumpMappingTextureCoordinatesId: Cardinal;
 
     { How many texture units are used.
 
@@ -504,7 +503,8 @@ type
 
     FSmoothShading: boolean;
     FFixedFunctionLighting: boolean;
-    FFixedFunctionAlphaTest: boolean;
+    FFixedFunctionAlphaTest: Boolean;
+    FFixedFunctionAlphaCutoff: Single;
     FLineType: TLineType;
 
     function PrepareTexture(Shape: TShape; Texture: TAbstractTextureNode): Pointer;
@@ -531,7 +531,8 @@ type
 
     procedure SetSmoothShading(const Value: boolean);
     procedure SetFixedFunctionLighting(const Value: boolean);
-    procedure SetFixedFunctionAlphaTest(const Value: boolean);
+    procedure SetFixedFunctionAlphaTest(const Value: Boolean);
+    procedure SetFixedFunctionAlphaCutoff(const Value: Single);
     procedure SetLineType(const Value: TLineType);
 
     { Change glShadeModel by this property. }
@@ -539,7 +540,10 @@ type
     { Change GL_LIGHTING enabled by this property. }
     property FixedFunctionLighting: boolean read FFixedFunctionLighting write SetFixedFunctionLighting;
     { Change GL_ALPHA_TEST enabled by this property. }
-    property FixedFunctionAlphaTest: boolean read FFixedFunctionAlphaTest write SetFixedFunctionAlphaTest;
+    property FixedFunctionAlphaTest: Boolean read FFixedFunctionAlphaTest write SetFixedFunctionAlphaTest;
+    { Change glAlphaFunc(GL_GEQUAL, ...) parameter by this property.
+      Note that we always use GL_GEQUAL comparison. }
+    property FixedFunctionAlphaCutoff: Single read FFixedFunctionAlphaCutoff write SetFixedFunctionAlphaCutoff;
     property LineType: TLineType read FLineType write SetLineType;
 
     {$I castleinternalrenderer_surfacetextures.inc}
@@ -599,33 +603,33 @@ type
       const Shader: TShader);
     procedure RenderShapeLights(const Shape: TX3DRendererShape;
       const Shader: TShader;
-      const MaterialOpacity: Single; const Lighting: boolean);
+      const Lighting: boolean);
     procedure RenderShapeFog(const Shape: TX3DRendererShape;
       const Shader: TShader;
-      const MaterialOpacity: Single; const Lighting: boolean);
+      const Lighting: boolean);
     procedure RenderShapeTextureTransform(const Shape: TX3DRendererShape;
       const Shader: TShader;
-      const MaterialOpacity: Single; const Lighting: boolean);
+      const Lighting: boolean);
     procedure RenderShapeClipPlanes(const Shape: TX3DRendererShape;
       const Shader: TShader;
-      const MaterialOpacity: Single; const Lighting: boolean);
+      const Lighting: boolean);
     procedure RenderShapeCreateMeshRenderer(const Shape: TX3DRendererShape;
       const Shader: TShader;
-      const MaterialOpacity: Single; const Lighting: boolean);
+      const Lighting: boolean);
     procedure RenderShapeShaders(const Shape: TX3DRendererShape;
       const Shader: TShader;
-      const MaterialOpacity: Single; const Lighting: boolean;
+      const Lighting: boolean;
       const GeneratorClass: TArraysGeneratorClass;
       const ExposedMeshRenderer: TObject);
     procedure RenderShapeTextures(const Shape: TX3DRendererShape;
       const Shader: TShader;
-      const MaterialOpacity: Single; const Lighting: boolean;
+      const Lighting: boolean;
       const GeneratorClass: TArraysGeneratorClass;
       const ExposedMeshRenderer: TObject;
       const UsedGLSLTexCoordsNeeded: Cardinal);
     procedure RenderShapeInside(const Shape: TX3DRendererShape;
       const Shader: TShader;
-      const MaterialOpacity: Single; const Lighting: boolean;
+      const Lighting: boolean;
       const GeneratorClass: TArraysGeneratorClass;
       const ExposedMeshRenderer: TObject);
 
@@ -1650,7 +1654,7 @@ end;
 
 destructor TShapeCache.Destroy;
 begin
-  FreeArrays(AllVboTypes);
+  FreeAndNil(Arrays);
   FreeVBO;
   inherited;
 end;
@@ -1672,9 +1676,8 @@ begin
   end;
 end;
 
-procedure TShapeCache.FreeArrays(const Changed: TVboTypes);
+procedure TShapeCache.InvalidateVertexData(const Changed: TVboTypes);
 begin
-  FreeAndNil(Arrays);
   VboToReload := VboToReload + Changed;
 end;
 
@@ -1730,104 +1733,55 @@ var
   end;
 
 begin
-  Assert(GLFeatures.VertexBufferObject);
-  Assert(not Arrays.DataFreed);
-
-  NewVbos := Vbo[vtCoordinate] = 0;
-  if NewVbos then
+  if GLFeatures.VertexBufferObject then
   begin
-    glGenBuffers(Ord(High(Vbo)) + 1, @Vbo);
-    if LogRenderer then
-      WritelnLog('Renderer', Format('Creating and loading data to VBOs (%d,%d,%d)',
-        [Vbo[vtCoordinate], Vbo[vtAttribute], Vbo[vtIndex]]));
-  end else
-  begin
-    if LogRenderer then
-      WritelnLog('Renderer', Format('Loading data to existing VBOs (%d,%d,%d), reloading %s',
-        [Vbo[vtCoordinate], Vbo[vtAttribute], Vbo[vtIndex],
-         VboTypesToStr(VboToReload)]));
-  end;
+    { In case of VBO not supported (ancient GPUs), we do not free data in Arrays,
+      it will be used to provide data at each draw call. }
+    Assert(not Arrays.DataFreed);
 
-  if DynamicGeometry then
-    { GL_STREAM_DRAW is most suitable if we will modify this every frame,
-      according to
-      https://www.khronos.org/opengl/wiki/Buffer_Object
-      https://computergraphics.stackexchange.com/questions/5712/gl-static-draw-vs-gl-dynamic-draw-vs-gl-stream-draw-does-it-matter
-    }
-    DataUsage := GL_STREAM_DRAW
-  else
-    DataUsage := GL_STATIC_DRAW;
-
-  VboCoordinatePreserveGeometryOrder := Arrays.CoordinatePreserveGeometryOrder;
-
-  BufferData(vtCoordinate, GL_ARRAY_BUFFER,
-    Arrays.Count * Arrays.CoordinateSize, Arrays.CoordinateArray);
-
-  BufferData(vtAttribute, GL_ARRAY_BUFFER,
-    Arrays.Count * Arrays.AttributeSize, Arrays.AttributeArray);
-
-  if Arrays.Indexes <> nil then
-    BufferData(vtIndex, GL_ELEMENT_ARRAY_BUFFER,
-      Arrays.Indexes.Count * SizeOf(TGeometryIndex), Arrays.Indexes.L);
-
-  VboAllocatedUsage := DataUsage;
-
-  Arrays.FreeData;
-
-  { Vbos are fully loaded now. By setting them to empty here,
-    we can later at FreeArrays update VboToReload (and this way things
-    work even if you call FreeArrays multiple times, the needed updates
-    are summed). }
-  VboToReload := [];
-end;
-
-function TShapeCache.FastCoordinateNormalUpdate(const Coords, Normals: TVector3List): Boolean;
-type
-  TCoordinateNormal = packed record
-    Coord, Normal: TVector3;
-  end;
-var
-  NewCoordinates: array of TCoordinateNormal;
-  Count, Size: Cardinal;
-  I: Integer;
-begin
-  Result := false;
-
-  if { VBO of coordinates was initialized.
-       This also means that Arrays.FreeData was called, as LoadArraysToVbo does it. }
-     (Vbo[vtCoordinate] <> 0) and
-     VboCoordinatePreserveGeometryOrder and
-     (Normals.Count = Coords.Count) then
-  begin
-    Count := Coords.Count;
-    Size := Count * SizeOf(TCoordinateNormal);
-    if (VboAllocatedUsage = GL_STREAM_DRAW) and
-       { Comparing the byte sizes also makes sure that previous and new coordinates
-         count stayed the same.
-         Right now we always pack into TCoordinateNormal record (2 vectors, 3x floats)
-         so VboAllocatedSize[vtCoordinate] just determines the count.
-       }
-       (VboAllocatedSize[vtCoordinate] = Size) then
+    NewVbos := Vbo[vtCoordinate] = 0;
+    if NewVbos then
     begin
-      Result := true;
-      if Count <> 0 then
-      begin
-        VboToReload := VboToReload + [vtCoordinate];
-
-        // calculate NewCoordinates
-        SetLength(NewCoordinates, Count);
-        for I := 0 to Count - 1 do
-        begin
-          NewCoordinates[I].Coord := Coords.List^[I];
-          NewCoordinates[I].Normal := Normals.List^[I];
-        end;
-
-        // load NewCoordinates to GPU
-        glBindBuffer(GL_ARRAY_BUFFER, Vbo[vtCoordinate]);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, Size, Pointer(NewCoordinates));
-      end;
+      glGenBuffers(Ord(High(Vbo)) + 1, @Vbo);
+      if LogRenderer then
+        WritelnLog('Renderer', Format('Creating and loading data to VBOs (%d,%d,%d)',
+          [Vbo[vtCoordinate], Vbo[vtAttribute], Vbo[vtIndex]]));
+    end else
+    begin
+      if LogRenderer then
+        WritelnLog('Renderer', Format('Loading data to existing VBOs (%d,%d,%d), reloading %s',
+          [Vbo[vtCoordinate], Vbo[vtAttribute], Vbo[vtIndex],
+           VboTypesToStr(VboToReload)]));
     end;
+
+    if DynamicGeometry then
+      { GL_STREAM_DRAW is most suitable if we will modify this every frame,
+        according to
+        https://www.khronos.org/opengl/wiki/Buffer_Object
+        https://computergraphics.stackexchange.com/questions/5712/gl-static-draw-vs-gl-dynamic-draw-vs-gl-stream-draw-does-it-matter
+      }
+      DataUsage := GL_STREAM_DRAW
+    else
+      DataUsage := GL_STATIC_DRAW;
+
+    VboCoordinatePreserveGeometryOrder := Arrays.CoordinatePreserveGeometryOrder;
+
+    BufferData(vtCoordinate, GL_ARRAY_BUFFER,
+      Arrays.Count * Arrays.CoordinateSize, Arrays.CoordinateArray);
+
+    BufferData(vtAttribute, GL_ARRAY_BUFFER,
+      Arrays.Count * Arrays.AttributeSize, Arrays.AttributeArray);
+
+    if Arrays.Indexes <> nil then
+      BufferData(vtIndex, GL_ELEMENT_ARRAY_BUFFER,
+        Arrays.Indexes.Count * SizeOf(TGeometryIndex), Arrays.Indexes.L);
+
+    VboAllocatedUsage := DataUsage;
+
+    Arrays.FreeData;
   end;
+
+  VboToReload := [];
 end;
 
 function TShapeCache.ToString: String;
@@ -2109,17 +2063,12 @@ begin
     glDisable(GL_TEXTURE_GEN_Q);
     {$endif}
 
-    { Initialize FFixedFunctionAlphaTest, make sure OpenGL state is appropriate }
+    { Initialize FFixedFunctionAlphaTest/Cutoff, make sure OpenGL state is appropriate }
     FFixedFunctionAlphaTest := false;
+    FFixedFunctionAlphaCutoff := 0.5;
     {$ifndef OpenGLES}
     glDisable(GL_ALPHA_TEST);
-    {$endif}
-
-    { We only use glAlphaFunc for textures, and there this value is suitable.
-      We never change glAlphaFunc during rendering, so no need to call this in RenderEnd. }
-    {$ifndef OpenGLES}
-    if Beginning then
-      glAlphaFunc(GL_GEQUAL, 0.5);
+    glAlphaFunc(GL_GEQUAL, FFixedFunctionAlphaCutoff);
     {$endif}
   end;
 
@@ -2330,9 +2279,7 @@ procedure TGLRenderer.RenderShape(const Shape: TX3DRendererShape);
   begin
     Result :=
       (Shape.Node <> nil) and
-      ( (Shape.Node.Material is TTwoSidedMaterialNode) or
-        (Shape.Node.Material is TPhysicalMaterialNode)
-      );
+      (Shape.Node.Material is TPhysicalMaterialNode);
   end;
 
 var
@@ -2399,12 +2346,12 @@ procedure TGLRenderer.RenderShapeMaterials(const Shape: TX3DRendererShape;
 
 begin
   RenderMaterialsBegin;
-  RenderShapeLights(Shape, Shader, MaterialOpacity, Lighting);
+  RenderShapeLights(Shape, Shader, Lighting);
 end;
 
 procedure TGLRenderer.RenderShapeLights(const Shape: TX3DRendererShape;
   const Shader: TShader;
-  const MaterialOpacity: Single; const Lighting: boolean);
+  const Lighting: boolean);
 var
   SceneLights: TLightInstancesList;
 begin
@@ -2428,12 +2375,12 @@ begin
     LightsRenderer.Render(BaseLights, SceneLights, Shader);
   end;
 
-  RenderShapeFog(Shape, Shader, MaterialOpacity, Lighting);
+  RenderShapeFog(Shape, Shader, Lighting);
 end;
 
 procedure TGLRenderer.RenderShapeFog(const Shape: TX3DRendererShape;
   const Shader: TShader;
-  const MaterialOpacity: Single; const Lighting: boolean);
+  const Lighting: boolean);
 
 const
   FogCoordinateSource: array [boolean { volumetric }] of TFogCoordinateSource =
@@ -2546,11 +2493,11 @@ begin
   if FogEnabled then
     Shader.EnableFog(FogType, FogCoordinateSource[FogVolumetric],
       FogColor, FogLinearEnd, FogExpDensity);
-  RenderShapeTextureTransform(Shape, Shader, MaterialOpacity, Lighting);
+  RenderShapeTextureTransform(Shape, Shader, Lighting);
 end;
 
 procedure TGLRenderer.RenderShapeTextureTransform(const Shape: TX3DRendererShape;
-  const Shader: TShader; const MaterialOpacity: Single; const Lighting: boolean);
+  const Shader: TShader; const Lighting: boolean);
 var
   TextureTransform: TAbstractTextureTransformNode;
   Child: TX3DNode;
@@ -2704,7 +2651,7 @@ begin
     end;
   end;
 
-  RenderShapeClipPlanes(Shape, Shader, MaterialOpacity, Lighting);
+  RenderShapeClipPlanes(Shape, Shader, Lighting);
 
   if GLFeatures.EnableFixedFunction then
   begin
@@ -2738,7 +2685,7 @@ end;
 
 procedure TGLRenderer.RenderShapeClipPlanes(const Shape: TX3DRendererShape;
   const Shader: TShader;
-  const MaterialOpacity: Single; const Lighting: boolean);
+  const Lighting: boolean);
 var
   { How many clip planes were enabled (and so, how many must be disabled
     at the end). }
@@ -2799,7 +2746,7 @@ begin
   {$endif}
 
     Shape.ModelView := Shape.ModelView * Shape.State.Transformation.Transform;
-    RenderShapeCreateMeshRenderer(Shape, Shader, MaterialOpacity, Lighting);
+    RenderShapeCreateMeshRenderer(Shape, Shader, Lighting);
 
   {$ifndef OpenGLES}
   if GLFeatures.EnableFixedFunction then
@@ -2810,7 +2757,7 @@ begin
 end;
 
 procedure TGLRenderer.RenderShapeCreateMeshRenderer(const Shape: TX3DRendererShape;
-  const Shader: TShader; const MaterialOpacity: Single; const Lighting: boolean);
+  const Shader: TShader; const Lighting: boolean);
 var
   GeneratorClass: TArraysGeneratorClass;
   MeshRenderer: TMeshRenderer;
@@ -2830,14 +2777,14 @@ var
       { If we have GeneratorClass, create TCompleteCoordinateRenderer.
         We'll initialize TCompleteCoordinateRenderer.Arrays later. }
       MeshRenderer := TCompleteCoordinateRenderer.Create(Self, Shape);
-      ShapeBumpMappingAllowed := GeneratorClass.BumpMappingAllowed;
+      Shape.BumpMappingAllowed := GeneratorClass.BumpMappingAllowed;
     end;
   end;
 
 begin
-  { default ShapeBumpMapping* state }
-  ShapeBumpMappingAllowed := false;
-  ShapeBumpMappingUsed := false;
+  { default Shape.BumpMapping* state }
+  Shape.BumpMappingAllowed := false;
+  Shape.BumpMappingUsed := false;
 
   { Initalize MeshRenderer to something non-nil. }
   if not InitMeshRenderer then
@@ -2850,7 +2797,7 @@ begin
   Assert(MeshRenderer <> nil);
 
   try
-    RenderShapeShaders(Shape, Shader, MaterialOpacity, Lighting,
+    RenderShapeShaders(Shape, Shader, Lighting,
       GeneratorClass, MeshRenderer);
   finally
     FreeAndNil(MeshRenderer);
@@ -2861,7 +2808,7 @@ end;
 
 procedure TGLRenderer.RenderShapeShaders(const Shape: TX3DRendererShape;
   const Shader: TShader;
-  const MaterialOpacity: Single; const Lighting: boolean;
+  const Lighting: boolean;
   const GeneratorClass: TArraysGeneratorClass;
   const ExposedMeshRenderer: TObject);
 var
@@ -2953,13 +2900,13 @@ begin
     end;
   end;
 
-  RenderShapeTextures(Shape, Shader, MaterialOpacity, Lighting,
+  RenderShapeTextures(Shape, Shader, Lighting,
     GeneratorClass, MeshRenderer, UsedGLSLTexCoordsNeeded);
 end;
 
 procedure TGLRenderer.RenderShapeTextures(const Shape: TX3DRendererShape;
   const Shader: TShader;
-  const MaterialOpacity: Single; const Lighting: boolean;
+  const Lighting: boolean;
   const GeneratorClass: TArraysGeneratorClass;
   const ExposedMeshRenderer: TObject;
   const UsedGLSLTexCoordsNeeded: Cardinal);
@@ -3007,11 +2954,21 @@ procedure TGLRenderer.RenderShapeTextures(const Shape: TX3DRendererShape;
       end;
   end;
 
+  function GetAlphaCutoff(const Shape: TShape): Single;
+  begin
+    if (Shape.Node <> nil) and
+       (Shape.Node.Appearance <> nil) then
+      Result := Shape.Node.Appearance.AlphaCutoff
+    else
+      Result := DefaultAlphaCutoff;
+  end;
+
   procedure RenderTexturesBegin;
   var
     TextureNode: TAbstractTextureNode;
     GLTextureNode: TGLTextureNode;
-    AlphaTest: boolean;
+    AlphaTest: Boolean;
+    AlphaCutoff: Single;
     FontTextureNode: TAbstractTexture2DNode;
     GLFontTextureNode: TGLTextureNode;
     MainTextureMapping: Integer;
@@ -3074,22 +3031,16 @@ procedure TGLRenderer.RenderShapeTextures(const Shape: TX3DRendererShape;
       SurfaceTexturesEnable(Shape, BoundTextureUnits, TexCoordsNeeded, Shader);
     end;
 
-    { Set alpha test enabled state for OpenGL (shader and fixed-function).
-      We handle here textures with simple (yes/no) alpha channel.
-
-      This is not necessarily perfect, as OpenGL will test the
-      final alpha := material alpha mixed with all multi-textures alpha.
-      So anything using blending (material using transparency,
-      or other texture will full-range alpha channel) will modify the actual
-      alpha tested. This isn't really correct --- we would prefer to only
-      test the alpha of textures with yes/no alpha channel.
-      But there's no way to fix it in fixed-function pipeline.
-      May be handled better in shader pipeline someday (alpha test should
-      be done for texture colors). }
-
+    { Set alpha test state (shader and fixed-function) }
     FixedFunctionAlphaTest := AlphaTest;
     if AlphaTest then
-      Shader.EnableAlphaTest;
+    begin
+      { only calculate AlphaCutoff when AlphaTest, otherwise it is useless }
+      AlphaCutoff := GetAlphaCutoff(Shape);
+      FixedFunctionAlphaCutoff := AlphaCutoff;
+
+      Shader.EnableAlphaTest(AlphaCutoff);
+    end;
 
     { Make active texture 0. This is helpful for rendering code of
       some primitives that do not support multitexturing now
@@ -3112,20 +3063,157 @@ procedure TGLRenderer.RenderShapeTextures(const Shape: TX3DRendererShape;
 begin
   RenderTexturesBegin;
   try
-    RenderShapeInside(Shape, Shader, MaterialOpacity, Lighting,
-      GeneratorClass, MeshRenderer);
+    RenderShapeInside(Shape, Shader, Lighting, GeneratorClass, MeshRenderer);
   finally RenderTexturesEnd end;
+end;
+
+{ Sometimes the updates indicated by Shape.Cache.VboToReload can be performed without
+  actually recreating the Shape.Cache.Arrays (so no need to create TArraysGenerator
+  and call TArraysGenerator.GenerateArrays).
+  Detect and perform such optimized case.
+
+  This is crucial for skinned animation, that only requires updating coords/normals/tangents
+  each frame, no need for updating other attributes. }
+function FastUpdateArrays(const Shape: TX3DRendererShape): Boolean;
+
+  { If possible, update the coordinate/normal/tangent data in VBO fast.
+
+    This is carefully implemented to do a specific case of TShapeCache.LoadArraysToVbo.
+    It optimizes the case of animating coordinates/normals/tangents using CoordinateInterpolator,
+    which is very important to optimize, since that's how glTF skinned animations
+    are done.
+
+    Pass non-nil Tangents if VBO should have tangent data,
+    pass nil Tangents if VBO should not have it. }
+  function FastCoordinateNormalUpdate(const Cache: TShapeCache;
+    const Coords, Normals, Tangents: TVector3List): Boolean;
+  var
+    NewCoordinates, NewCoord: Pointer;
+    Count, Size, ItemSize: Cardinal;
+    I: Integer;
+  begin
+    Result := false;
+
+    if Cache.VboCoordinatePreserveGeometryOrder and
+       (Normals.Count = Coords.Count) and
+       ( (Tangents = nil) or
+         (Tangents.Count = Coords.Count) ) then
+    begin
+      Count := Coords.Count;
+
+      ItemSize := SizeOf(TVector3) * 2;
+      if Tangents <> nil then
+        ItemSize += SizeOf(TVector3);
+      Size := Count * ItemSize;
+
+      if (Cache.VboAllocatedUsage = GL_STREAM_DRAW) and
+         { Comparing the byte sizes also makes sure that previous and new coordinates
+           count stayed the same.
+           (Well, assuming we didn't change the Count, and simultaneously changed
+           the Tangent existence, which in theory could cause Size to match
+           for different structures.)
+         }
+         (Cache.VboAllocatedSize[vtCoordinate] = Size) then
+      begin
+        Result := true;
+        Cache.VboToReload := Cache.VboToReload - [vtCoordinate]; // vtCoordinate are done
+        if Count <> 0 then
+        begin
+          // calculate NewCoordinates
+          NewCoordinates := GetMem(Size);
+          try
+            NewCoord := NewCoordinates;
+
+            if Tangents <> nil then
+            begin
+              for I := 0 to Count - 1 do
+              begin
+                PVector3(NewCoord)^ := Coords.List^[I];
+                PtrUInt(NewCoord) += SizeOf(TVector3);
+
+                PVector3(NewCoord)^ := Normals.List^[I];
+                PtrUInt(NewCoord) += SizeOf(TVector3);
+
+                PVector3(NewCoord)^ := Tangents.List^[I];
+                PtrUInt(NewCoord) += SizeOf(TVector3);
+              end;
+            end else
+            begin
+              for I := 0 to Count - 1 do
+              begin
+                PVector3(NewCoord)^ := Coords.List^[I];
+                PtrUInt(NewCoord) += SizeOf(TVector3);
+
+                PVector3(NewCoord)^ := Normals.List^[I];
+                PtrUInt(NewCoord) += SizeOf(TVector3);
+              end;
+            end;
+
+            // load NewCoordinates to GPU
+            glBindBuffer(GL_ARRAY_BUFFER, Cache.Vbo[vtCoordinate]);
+            glBufferSubData(GL_ARRAY_BUFFER, 0, Size, NewCoordinates);
+          finally FreeMemNiling(NewCoordinates) end;
+        end;
+      end;
+    end;
+  end;
+
+var
+  Cache: TShapeCache;
+  Coords, Normals, Tangents: TVector3List;
+begin
+  Result := false;
+
+  Cache := Shape.Cache;
+
+  // this only optimizes the specific case of VboToReload = [vtCoordinate] now
+  if Cache.VboToReload <> [vtCoordinate] then
+    Exit;
+
+  { When VBO of coordinates is 0 then
+    - VBOs not supported (ancient GPU) -> we need to really update Arrays contents each time
+    - or VBO of coordinates was not initialized yet }
+  if Cache.Vbo[vtCoordinate] = 0 then
+    Exit;
+  if Cache.Arrays = nil then // not initialized yet
+    Exit;
+
+  if // Shape has coordinates expressed in simple way
+     (Shape.Geometry.CoordField <> nil) and
+     (Shape.Geometry.CoordField.Value is TCoordinateNode) then // checks also Value <> nil
+  begin
+    Coords := TCoordinateNode(Shape.Geometry.CoordField.Value).FdPoint.Items;
+
+    if // Shape has normals expressed in simple way
+       (Shape.Geometry.NormalField <> nil) and
+       (Shape.Geometry.NormalField.Value is TNormalNode) then // checks also Value <> nil
+    begin
+      Normals := TNormalNode(Shape.Geometry.NormalField.Value).FdVector.Items;
+
+      // Shape has normals expressed in tangents way, or doesn't use tangents (when no bump mapping used)
+      if ( (not Cache.Arrays.HasTangent) or
+           ( (Shape.Geometry.TangentField <> nil) and
+             (Shape.Geometry.TangentField.Value is TTangentNode) ) ) then // checks also Value <> nil
+      begin
+        if Cache.Arrays.HasTangent then
+          Tangents := TTangentNode(Shape.Geometry.TangentField.Value).FdVector.Items
+        else
+          Tangents := nil;
+
+        Result := FastCoordinateNormalUpdate(Cache, Coords, Normals, Tangents);
+      end;
+    end;
+  end;
 end;
 
 procedure TGLRenderer.RenderShapeInside(const Shape: TX3DRendererShape;
   const Shader: TShader;
-  const MaterialOpacity: Single; const Lighting: boolean;
+  const Lighting: boolean;
   const GeneratorClass: TArraysGeneratorClass;
   const ExposedMeshRenderer: TObject);
 var
   Generator: TArraysGenerator;
   CoordinateRenderer: TBaseCoordinateRenderer;
-  VBO: boolean;
 begin
   { No point preparing VBO for clones, clones will need own VBOs anyway. }
   if RenderMode = rmPrepareRenderClones then
@@ -3141,35 +3229,31 @@ begin
     if Shape.Cache = nil then
       Shape.Cache := Cache.Shape_IncReference(Shape, Self);
 
-    VBO := GLFeatures.VertexBufferObject;
-
     { calculate Shape.Cache.Arrays }
-    if Shape.Cache.Arrays = nil then
+    if (Shape.Cache.Arrays = nil) or
+       (Shape.Cache.VboToReload <> []) then
     begin
-      Generator := GeneratorClass.Create(Shape, true);
-      try
-        Generator.TexCoordsNeeded := TexCoordsNeeded;
-        Generator.MaterialOpacity := MaterialOpacity;
-        Generator.FogVolumetric := FogVolumetric;
-        Generator.FogVolumetricDirection := FogVolumetricDirection;
-        Generator.FogVolumetricVisibilityStart := FogVolumetricVisibilityStart;
-        Generator.ShapeBumpMappingUsed := ShapeBumpMappingUsed;
-        Generator.ShapeBumpMappingTextureCoordinatesId := ShapeBumpMappingTextureCoordinatesId;
-        Shape.Cache.Arrays := Generator.GenerateArrays;
-      finally FreeAndNil(Generator) end;
+      if not FastUpdateArrays(Shape) then
+      begin
+        FreeAndNil(Shape.Cache.Arrays); // we just need to create new Arrays
+        Generator := GeneratorClass.Create(Shape, true);
+        try
+          Generator.TexCoordsNeeded := TexCoordsNeeded;
+          Generator.FogVolumetric := FogVolumetric;
+          Generator.FogVolumetricDirection := FogVolumetricDirection;
+          Generator.FogVolumetricVisibilityStart := FogVolumetricVisibilityStart;
+          Generator.ShapeBumpMappingUsed := Shape.BumpMappingUsed;
+          Generator.ShapeBumpMappingTextureCoordinatesId := Shape.BumpMappingTextureCoordinatesId;
+          Shape.Cache.Arrays := Generator.GenerateArrays;
+        finally FreeAndNil(Generator) end;
 
-      { Always after regenerating Shape.Cache.Arrays, reload Shape.Cache.Vbo contents }
-      if VBO then
+        { Always after recreating Shape.Cache.Arrays, reload Shape.Cache.Vbo contents.
+          This also clears VboToReload. }
         Shape.LoadArraysToVbo;
-    end else
-    begin
-      { Arrays contents are already loaded, make sure that Vbo are loaded too
-        (in case Arrays were loaded previously, when VBO = false). }
-      if VBO and (Shape.Cache.Vbo[vtCoordinate] = 0) then
-        Shape.LoadArraysToVbo;
+      end;
     end;
 
-    if VBO then
+    if GLFeatures.VertexBufferObject then
     begin
       { Shape.Arrays contents are already loaded,
         so Vbo contents are already loaded too }
@@ -3186,7 +3270,7 @@ begin
   MeshRenderer.PrepareRenderShape := RenderMode in [rmPrepareRenderSelf, rmPrepareRenderClones];
   MeshRenderer.Render;
 
-  if (GeneratorClass <> nil) and VBO then
+  if (GeneratorClass <> nil) and GLFeatures.VertexBufferObject then
   begin
     { unbind arrays, to have a clean state on exit.
       TODO: this should not be needed, instead move to RenderEnd.
@@ -3254,7 +3338,7 @@ var
     Update := Handler.Update.Value;
     Result :=
         (Update = upNextFrameOnly) or
-      ( (Update = upAlways) and Handler.UpdateNeeded );
+      ( (Update = upAlways) and Handler.InternalUpdateNeeded );
   end;
 
   { Call this after CheckUpdateField returned @true and you updated
@@ -3264,19 +3348,24 @@ var
   begin
     if SavedHandler.Update.Value = upNextFrameOnly then
       SavedHandler.Update.Send(upNone);
-    SavedHandler.UpdateNeeded := false;
+    SavedHandler.InternalUpdateNeeded := false;
   end;
 
   procedure UpdateGeneratedCubeMap(TexNode: TGeneratedCubeMapTextureNode);
   var
     GLNode: TGLGeneratedCubeMapTextureNode;
   begin
-    { Shape.BoundingBox must be non-empty, otherwise we don't know from what
-      3D point to capture environment. }
-    if Shape.BoundingBox.IsEmpty then Exit;
-
     if CheckUpdate(TexNode.GeneratedTextureHandler) then
     begin
+      { Shape.BoundingBox must be non-empty, otherwise we don't know from what
+        3D point to capture environment.
+
+        Note: check Shape.BoundingBox only after CheckUpdate passed.
+        This is more optimal, as Shape.BoundingBox may need to iterate over mesh.
+        Testcase: examples/mobile/simple_3d_demo/gameinitialize.pas with "toggle cubemap updates" = "off",
+        look at how much UpdateGeneratedTextures is eating. Should be 0% if off. }
+      if Shape.BoundingBox.IsEmpty then Exit;
+
       GLNode := TGLGeneratedCubeMapTextureNode(GLTextureNodes.TextureNode(TexNode));
       if GLNode <> nil then
       begin
@@ -3388,6 +3477,17 @@ begin
     FFixedFunctionAlphaTest := Value;
     {$ifndef OpenGLES}
     GLSetEnabled(GL_ALPHA_TEST, FixedFunctionAlphaTest);
+    {$endif}
+  end;
+end;
+
+procedure TGLRenderer.SetFixedFunctionAlphaCutoff(const Value: Single);
+begin
+  if FFixedFunctionAlphaCutoff <> Value then
+  begin
+    FFixedFunctionAlphaCutoff := Value;
+    {$ifndef OpenGLES}
+    glAlphaFunc(GL_GEQUAL, FFixedFunctionAlphaCutoff);
     {$endif}
   end;
 end;

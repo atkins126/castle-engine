@@ -54,7 +54,7 @@ type
     @link(TUIContainer.BackgroundColor Container.BackgroundColor).
   }
   TCastleControlBase = class(TCustomOpenGLControl)
-  private
+  strict private
     type
       { Non-abstract implementation of TUIContainer that cooperates with
         TCastleControlBase. }
@@ -117,7 +117,6 @@ type
 
     procedure SetMousePosition(const Value: TVector2);
     procedure SetAutoRedisplay(const Value: boolean);
-    class function GetMainContainer: TUIContainer;
 
     { Force DoUpdate and Paint (if invalidated) events to happen,
       if sufficient time (based on LimitFPS, that in this case acts like
@@ -189,6 +188,8 @@ type
       with respect to handling input, e.g. mouse move will be processed with
       a small delay). So we use MaxDesiredFPS to cap it. }
     procedure AggressiveUpdate;
+  private
+    class function GetMainContainer: TUIContainer;
   protected
     procedure DestroyHandle; override;
     procedure DoExit; override;
@@ -482,7 +483,6 @@ type
 
   { Control to render everything (3D or 2D) with Castle Game Engine,
     with a default @link(TCastleSceneManager) instance already created for you.
-    This is the simplest way to render a 3D world with 2D controls above.
     Add your
     game stuff (descending from @link(TCastleTransform), like @link(TCastleScene))
     to the scene manager
@@ -496,7 +496,11 @@ type
 
     Note that if you don't plan to use the default @link(SceneManager)
     instance, then you should better create @link(TCastleControlBase) instead
-    of this class. }
+    of this class.
+
+    @deprecated This is deprecated, as such "control with default scene manager"
+    is an unnecessary API complication. Use instead TCastleControlBase
+    and just add there a TCastleViewport with FullSize = true, it is trivial. }
   TCastleControl = class(TCastleControlBase)
   private
     FSceneManager: TControlGameSceneManager;

@@ -21,7 +21,7 @@ unit CastleUIState;
 interface
 
 uses Classes, Generics.Collections,
-  CastleConfig, CastleKeysMouse, CastleImages, CastleUIControls,
+  CastleConfig, CastleKeysMouse, CastleImages, CastleUIControls, CastleClassUtils,
   CastleGLImages, CastleVectors, CastleRectangles;
 
 type
@@ -98,6 +98,8 @@ type
     FStartContainer: TUIContainer;
     FInterceptInput, FFreeWhenStopped: boolean;
     FFreeAtStop: TComponent;
+    FWaitingForRender: TNotifyEventList;
+    FCallBeforeUpdate: TNotifyEventList;
     procedure InternalStart;
     procedure InternalStop;
 
@@ -160,8 +162,8 @@ type
       (e.g. in Application.OnInitialize callback), like
 
       @longCode(#
-        StateMain := TStateMain.Create(Application);
-        StatePlay := TStateMain.Create(Application);
+        StateMainMenu := TStateMainMenu.Create(Application);
+        StatePlay := TStatePlay.Create(Application);
       #)
 
       Later you switch between states using @link(Current) or @link(Push) or @link(Pop),
@@ -170,6 +172,9 @@ type
       @longCode(#
         TUIState.Current := StateMain;
       #)
+
+      See https://castle-engine.io/manual_2d_user_interface.php
+      and numerous engine examples, like examples/user_interface/zombie_fighter/ .
     }
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
@@ -284,6 +289,7 @@ type
     function Motion(const Event: TInputMotion): boolean; override;
     procedure Update(const SecondsPassed: Single;
       var HandleInput: boolean); override;
+    procedure Render; override;
 
     { Load and show a user interface from a .castle-user-interface file,
       designed in Castle Game Engine Editor.
@@ -313,6 +319,26 @@ type
       out Ui: TCastleUserInterface; out UiOwner: TComponent);
     procedure InsertUserInterface(const DesignUrl: String;
       const FinalOwner: TComponent; out UiOwner: TComponent);
+
+    { Wait until the render event happens (to redraw current state),
+      and then call Event.
+
+      The scheduled Event will be called at the @link(Update) time.
+
+      If the state stopped before the scheduled events fired,
+      then the remaining events are ignored.
+      That is, the scheduled events are cleared every time you start the state.
+
+      One use-case of this is to show a loading state,
+      where you load things, but also update the loading progress from time to time.
+      Be careful in this case to not call this @italic(too often),
+      as then your loading time will be tied to rendering time.
+      For example, when the monitor refresh rate is 60, and the "vertical sync"
+      is "on", then the render events happen at most 60 times per second.
+      So if you call WaitForRenderAndCall too often during loading,
+      you may spend more time waiting for render event (each WaitForRenderAndCall
+      taking 1/60 of second) than doing actual loading. }
+    procedure WaitForRenderAndCall(const Event: TNotifyEvent);
   published
     { TUIState control makes most sense when it is FullSize,
       filling the whole window.
@@ -490,9 +516,14 @@ var
 begin
   TimeStart := Profiler.Start('Started state ' + Name + ': ' + ClassName);
 
+  FWaitingForRender.Clear;
+  FCallBeforeUpdate.Clear;
+
   { typically, the Start method will initialize some stuff,
     making the 1st SecondsPassed non-representatively large. }
   StateContainer.Fps.ZeroNextSecondsPassed;
+
+  FStartContainer := StateContainer;
 
   Start;
   { actually insert, this will also call GLContextOpen and Resize.
@@ -508,7 +539,16 @@ end;
 procedure TUIState.InternalStop;
 begin
   StateContainer.Controls.Remove(Self);
+
   Stop;
+
+  {$warnings off}
+  Finish;
+  {$warnings on}
+
+  FStartContainer := nil;
+  FreeAndNil(FFreeAtStop);
+
   if Log then
     WritelnLog('UIState', 'Stopped state ' + Name + ': ' + ClassName);
 end;
@@ -532,6 +572,8 @@ constructor TUIState.Create(AOwner: TComponent);
 begin
   inherited;
   FullSize := true;
+  FWaitingForRender := TNotifyEventList.Create;
+  FCallBeforeUpdate := TNotifyEventList.Create;
 end;
 
 constructor TUIState.CreateUntilStopped;
@@ -556,6 +598,8 @@ begin
       FreeAndNil(FStateStack);
   end;
 
+  FreeAndNil(FWaitingForRender);
+  FreeAndNil(FCallBeforeUpdate);
   inherited;
 end;
 
@@ -573,17 +617,19 @@ end;
 
 procedure TUIState.Start;
 begin
-  FStartContainer := StateContainer;
+  { Do not place here any logic, to make sure TUIState works reliably even when
+    descendant doesn't have "inherited" call.
+    While we don't guarantee that our classes generally work OK in such situations
+    (you should always call "inherited" unless documented otherwise),
+    but in this special case we try to make it so, otherwise sometimes hard-to-debug
+    errors occur. }
 end;
 
 procedure TUIState.Stop;
 begin
-  {$warnings off}
-  Finish;
-  {$warnings on}
-
-  FStartContainer := nil;
-  FreeAndNil(FFreeAtStop);
+  { Do not place here any logic, to make sure TUIState works reliably even when
+    descendant doesn't have "inherited" call.
+    Same as in Start. }
 end;
 
 procedure TUIState.Finish;
@@ -617,9 +663,25 @@ end;
 procedure TUIState.Update(const SecondsPassed: Single;
   var HandleInput: boolean);
 begin
+  inherited;
+
   { do not allow controls underneath to handle input }
   if InterceptInput then
     HandleInput := false;
+
+  if FCallBeforeUpdate.Count <> 0 then // optimize away common case
+  begin
+    { In case of using CreateUntilStopped state, you cannot change state
+      in the middle of FCallBeforeUpdate.ExecuteAll,
+      as it would free the array that is being iterated over. }
+    if FFreeWhenStopped then Inc(FDisableStackChange);
+    try
+      FCallBeforeUpdate.ExecuteAll(Self);
+      FCallBeforeUpdate.Clear;
+    finally
+      if FFreeWhenStopped then Dec(FDisableStackChange);
+    end;
+  end;
 end;
 
 procedure TUIState.InsertUserInterface(const DesignUrl: String;
@@ -638,6 +700,18 @@ var
 begin
   InsertUserInterface(DesignUrl, FinalOwner, Ui, UiOwner);
   // ignore the returned Ui reference
+end;
+
+procedure TUIState.Render;
+begin
+  inherited;
+  FCallBeforeUpdate.AddRange(FWaitingForRender);
+  FWaitingForRender.Clear;
+end;
+
+procedure TUIState.WaitForRenderAndCall(const Event: TNotifyEvent);
+begin
+  FWaitingForRender.Add(Event);
 end;
 
 end.

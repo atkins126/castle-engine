@@ -96,7 +96,7 @@ begin
     P.Targets.AddUnit('castlecomponentserialize.pas');
     P.Targets.AddUnit('castlecubemaps.pas');
     P.Targets.AddUnit('castlefrustum.pas');
-    P.Targets.AddUnit('castlegeometryarrays.pas');
+    P.Targets.AddUnit('castleinternalgeometryarrays.pas');
     P.Targets.AddUnit('castleinternaloctree.pas');
     P.Targets.AddUnit('castlenurbs.pas');
     P.Targets.AddUnit('castlequaternions.pas');
@@ -260,6 +260,7 @@ begin
     P.Targets.AddUnit('castlefontfamily.pas');
 
     P.SourcePath.Add('src' + PathDelim + 'game');
+    P.Targets.AddUnit('castlebehaviors.pas');
     P.Targets.AddUnit('castlecreatures.pas');
     P.Targets.AddUnit('castledebugtransform.pas');
     P.Targets.AddUnit('castlegamenotifications.pas');
@@ -344,7 +345,7 @@ begin
     end;
 
     P.SourcePath.Add('src' + PathDelim + 'x3d');
-    P.Targets.AddUnit('castlearraysgenerator.pas');
+    P.Targets.AddUnit('castleinternalarraysgenerator.pas');
     P.Targets.AddUnit('castleinternalnodeinterpolator.pas');
     P.Targets.AddUnit('castleinternalnormals.pas');
     P.Targets.AddUnit('castleinternalshadowmaps.pas');
