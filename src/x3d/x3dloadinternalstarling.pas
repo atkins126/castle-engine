@@ -34,11 +34,11 @@ type
   { Starling XML file is not correct }
   EInvalidStarlingXml = class(Exception);
 
-function LoadStarlingSpriteSheet(const URL: String): TX3DRootNode;
+function LoadStarlingSpriteSheet(const Stream: TStream; const BaseUrl: String): TX3DRootNode;
 
 implementation
 
-uses StrUtils, DOM,
+uses StrUtils, DOM, XMLRead,
   CastleImages, CastleLog, CastleStringUtils, CastleTextureImages,
   CastleURIUtils, CastleUtils, CastleVectors, CastleXMLUtils;
 
@@ -80,8 +80,9 @@ type
         constructor Create;
       end;
     var
-      FURL: String;
-      FDisplayURL: String;
+      FStream: TStream;
+      FBaseUrl: String;
+      FDisplayUrl: String;
 
       { Load settings. }
       FFramesPerSecond: Single;
@@ -105,7 +106,7 @@ type
 
     procedure PrepareX3DRoot;
 
-    procedure ReadImageProperties(const URL: String; const AtlasNode: TDOMElement);
+    procedure ReadImageProperties(const BaseUrl: String; const AtlasNode: TDOMElement);
 
     procedure CalculateFrameCoords(const SubTexture: TStarlingSubTexture);
 
@@ -127,17 +128,17 @@ type
     function CheckAnimationNameAvailable(const AnimationName: String): Boolean;
 
   public
-    constructor Create(const URL: String);
+    constructor Create(const Stream: TStream; const BaseUrl: String);
     destructor Destroy; override;
 
     function Load: TX3DRootNode;
   end;
 
-function LoadStarlingSpriteSheet(const URL: String): TX3DRootNode;
+function LoadStarlingSpriteSheet(const Stream: TStream; const BaseUrl: String): TX3DRootNode;
 var
   StarlingLoader: TStarlingSpriteSheetLoader;
 begin
-  StarlingLoader := TStarlingSpriteSheetLoader.Create(URL);
+  StarlingLoader := TStarlingSpriteSheetLoader.Create(Stream, BaseUrl);
   try
     Result := StarlingLoader.Load;
   finally
@@ -157,7 +158,7 @@ begin
 
   SettingsMap := TStringStringMap.Create;
   try
-    URIExtractSettingsFromAnchor(FURL, SettingsMap);
+    URIGetSettingsFromAnchor(FBaseUrl, SettingsMap);
     for Setting in SettingsMap do
     begin
       if LowerCase(Setting.Key) = 'fps' then
@@ -172,10 +173,10 @@ begin
           FSubTexture.FAnimationNaming := anTralingNumber
         else
           WritelnWarning('Starling', 'Unknown anim-naming value (%s) in "%s" anchor.',
-            [Setting.Value, FDisplayURL]);
+            [Setting.Value, FDisplayUrl]);
       end else
         WritelnWarning('Starling', 'Unknown setting (%s) in "%s" anchor.',
-          [Setting.Key, FDisplayURL]);
+          [Setting.Key, FDisplayUrl]);
     end;
   finally
     FreeAndNil(SettingsMap);
@@ -185,15 +186,15 @@ end;
 procedure TStarlingSpriteSheetLoader.PrepareX3DRoot;
 begin
   FRoot.Meta['generator'] := 'Castle Game Engine, https://castle-engine.io';
-  FRoot.Meta['source'] := ExtractURIName(FURL);
+  FRoot.Meta['source'] := ExtractURIName(FBaseUrl);
 end;
 
-procedure TStarlingSpriteSheetLoader.ReadImageProperties(const URL: String;
+procedure TStarlingSpriteSheetLoader.ReadImageProperties(const BaseUrl: String;
   const AtlasNode: TDOMElement);
 var
   Image: TCastleImage;
 begin
-  FImagePath := ExtractURIPath(URL) + AtlasNode.AttributeString('imagePath');
+  FImagePath := ExtractURIPath(BaseUrl) + AtlasNode.AttributeString('imagePath');
   { Some exporters like Free Texture Packer add width and height attributes.
     In this case we don't need load image to check them. }
   if AtlasNode.HasAttribute('width') and AtlasNode.HasAttribute('height') then
@@ -247,6 +248,7 @@ var
   Shape: TShapeNode;
   Tri: TTriangleSetNode;
   Tex: TImageTextureNode;
+  TexProperties: TTexturePropertiesNode;
 begin
   Shape := TShapeNode.Create;
   Shape.Material := TUnlitMaterialNode.Create;
@@ -256,6 +258,16 @@ begin
   Tex.RepeatS := false;
   Tex.RepeatT := false;
   Shape.Texture := Tex;
+
+  TexProperties := TTexturePropertiesNode.Create;
+  TexProperties.MagnificationFilter := magDefault;
+  TexProperties.MinificationFilter := minDefault;
+  { Do not force "power of 2" size, which may prevent mipmaps.
+    This seems like a better default (otherwise the resizing underneath
+    may cause longer loading time, and loss of quality, if not expected).
+    See https://github.com/castle-engine/castle-engine/issues/249 }
+  TexProperties.GuiTexture := true;
+  Tex.TextureProperties := TexProperties;
 
   Tri := TTriangleSetNode.Create;
   Tri.Solid := false;
@@ -353,7 +365,7 @@ begin
   if FAnimationList.IndexOf(AnimationName) > -1 then
   begin
     WritelnWarning('Starling', 'Mixed animations tags (animation: %s) in "%s".',
-      [AnimationName, FDisplayURL]);
+      [AnimationName, FDisplayUrl]);
     Exit(false);
   end;
 
@@ -361,12 +373,12 @@ begin
   Result := true;
 end;
 
-
-constructor TStarlingSpriteSheetLoader.Create(const URL: String);
+constructor TStarlingSpriteSheetLoader.Create(const Stream: TStream; const BaseUrl: String);
 begin
   inherited Create;
-  FURL := URL;
-  FDisplayURL := URIDisplay(FURL);
+  FStream := Stream;
+  FBaseUrl := BaseUrl;
+  FDisplayUrl := URIDisplay(FBaseUrl);
 
   FSubTexture := TStarlingSubTexture.Create;
   SetLength(FCoordArray, 6);
@@ -405,13 +417,13 @@ begin
   try
     try
       FRoot := TX3DRootNode.Create;
-      Doc := URLReadXML(FURL);
+      ReadXMLFile(Doc, FStream);
 
       Check(Doc.DocumentElement.TagName8 = 'TextureAtlas',
         'Root of Starling sprite sheet file must be <TextureAtlas>');
 
       AtlasNode := Doc.DocumentElement;
-      ReadImageProperties(FURL, AtlasNode);
+      ReadImageProperties(FBaseUrl, AtlasNode);
 
       CurrentAnimFrameCount := 0;
       FirstFrameInFirstAnimation := true;

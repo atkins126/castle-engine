@@ -43,7 +43,7 @@ type
       DefaultLife = 100.0;
 
     constructor Create(AOwner: TComponent); override;
-    function PropertySection(const PropertyName: String): TPropertySection; override;
+    function PropertySections(const PropertyName: String): TPropertySections; override;
 
     { Shortcut for checking Life <= 0. }
     function Dead: Boolean;
@@ -67,7 +67,7 @@ type
         What this "strengh" exactly means is not defined in this class.
         It may cause a "knockback" effect, in which case it may be a knockback
         distance, or a physical force strength, and is meaningful only when
-        @link(AHurtDirection) is non-zero.
+        @code(AHurtDirection) parameter is non-zero.
 
         In this class, it does nothing, merely sets @link(HurtStrength) property.
         Which may be used by other effects.)
@@ -95,7 +95,7 @@ type
       What this "strengh" exactly means is not defined in this class.
       It may cause a "knockback" effect, in which case it may be a knockback
       distance, or a physical force strength, and is meaningful only when
-      @link(AHurtDirection) is non-zero. }
+      @link(HurtDirection) is non-zero. }
     property HurtStrength: Single read FHurtStrength;
 
     { Last attacker. Set by the last @link(Hurt) call,
@@ -162,14 +162,14 @@ begin
   Attacker := AnAttacker;
 end;
 
-function TCastleAliveBehavior.PropertySection(
-  const PropertyName: String): TPropertySection;
+function TCastleAliveBehavior.PropertySections(
+  const PropertyName: String): TPropertySections;
 begin
   case PropertyName of
     'Life', 'MaxLife':
-      Result := psBasic;
+      Result := [psBasic];
     else
-      Result := inherited PropertySection(PropertyName);
+      Result := inherited PropertySections(PropertyName);
   end;
 end;
 

@@ -26,7 +26,7 @@ uses SysUtils, Classes, Generics.Collections,
   CastleInternalGLShadowVolumes, CastleUIControls, CastleTransform, CastleTriangles,
   CastleKeysMouse, CastleBoxes, CastleInternalBackground, CastleUtils, CastleClassUtils,
   CastleGLShaders, CastleGLImages, CastleTimeUtils, CastleControls,
-  CastleInputs, CastleRectangles, CastleColors,
+  CastleInputs, CastleRectangles, CastleColors, CastleComponentSerialize,
   CastleProjection, CastleScreenEffects;
 
 type
@@ -410,7 +410,7 @@ type
     procedure Update(const SecondsPassed: Single;
       var HandleInput: boolean); override;
     procedure BeforeRender; override;
-    function PropertySection(const PropertyName: String): TPropertySection; override;
+    function PropertySections(const PropertyName: String): TPropertySections; override;
 
     function GetMainScene: TCastleScene; deprecated 'use Items.MainScene';
 
@@ -1281,6 +1281,7 @@ var
 
 {$define read_interface}
 {$I castleviewport_touchnavigation.inc}
+{$I castleviewport_serialize.inc}
 {$undef read_interface}
 
 implementation
@@ -1292,7 +1293,7 @@ uses DOM, Math,
   CastleRenderingCamera,
   CastleGLUtils, CastleProgress, CastleLog, CastleStringUtils,
   CastleSoundEngine, CastleGLVersion, CastleShapes, CastleTextureImages,
-  CastleComponentSerialize, CastleInternalSettings, CastleXMLUtils, CastleURIUtils,
+  CastleInternalSettings, CastleXMLUtils, CastleURIUtils,
   CastleRenderContext, CastleApplicationProperties;
 {$warnings on}
 
@@ -1303,6 +1304,7 @@ end;
 {$define read_implementation}
 {$I castleviewport_touchnavigation.inc}
 {$I castleviewport_warmup_cache.inc}
+{$I castleviewport_serialize.inc}
 {$undef read_implementation}
 
 { TManagerRenderParams ------------------------------------------------------- }
@@ -3699,13 +3701,13 @@ begin
   {$warnings on}
 end;
 
-function TCastleViewport.PropertySection(const PropertyName: String): TPropertySection;
+function TCastleViewport.PropertySections(const PropertyName: String): TPropertySections;
 begin
   case PropertyName of
     'Transparent', 'Navigation':
-      Result := psBasic;
+      Result := [psBasic];
     else
-      Result := inherited PropertySection(PropertyName);
+      Result := inherited PropertySections(PropertyName);
   end;
 end;
 

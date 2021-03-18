@@ -217,6 +217,7 @@ EXAMPLES_BASE_NAMES := \
   examples/3d_rendering_processing/transform_scenes_demos \
   examples/3d_rendering_processing/show_bounding_rect_in_2d \
   examples/3d_rendering_processing/switch_projection \
+  examples/3d_rendering_processing/transform_feedback \
   examples/3d_rendering_processing/triangulate_demo \
   examples/3d_rendering_processing/view_3d_model_advanced \
   examples/3d_rendering_processing/view_3d_model_basic \
@@ -297,11 +298,11 @@ editor-template:
 	  $(EDITOR_TEMPLATE_PATH)CastleEngineManifest.xml
 	$(SED)  --in-place=.backup \
 	  -e 's|$${PROJECT_NAME}|test_template_project_name|' \
-	  $(EDITOR_TEMPLATE_PATH)gameinitialize.pas
+	  $(EDITOR_TEMPLATE_PATH)code/gameinitialize.pas
 	tools/build-tool/castle-engine$(EXE_EXTENSION) --project $(EDITOR_TEMPLATE_PATH) compile
 	tools/build-tool/castle-engine$(EXE_EXTENSION) --project $(EDITOR_TEMPLATE_PATH) clean
 	mv -f $(EDITOR_TEMPLATE_PATH)CastleEngineManifest.xml.backup $(EDITOR_TEMPLATE_PATH)CastleEngineManifest.xml
-	mv -f $(EDITOR_TEMPLATE_PATH)gameinitialize.pas.backup $(EDITOR_TEMPLATE_PATH)gameinitialize.pas
+	mv -f $(EDITOR_TEMPLATE_PATH)code/gameinitialize.pas.backup $(EDITOR_TEMPLATE_PATH)code/gameinitialize.pas
 
 # Test compiling CGE editor templates
 .PHONY: editor-templates

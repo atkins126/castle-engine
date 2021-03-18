@@ -101,7 +101,6 @@ type
     TabEvents: TTabSheet;
     TabLayout: TTabSheet;
     TabBasic: TTabSheet;
-    TabOther: TTabSheet;
     UpdateObjectInspector: TTimer;
     procedure ButtonClearAnchorDeltasClick(Sender: TObject);
     procedure ButtonResetTransformationClick(Sender: TObject);
@@ -193,7 +192,7 @@ type
 
       TTreeNodeSide = (tnsRight, tnsBottom, tnsTop);
 
-      TInspectorType = (itBasic, itLayout, itOther, itEvents, itAll);
+      TInspectorType = (itBasic, itLayout, itEvents, itAll);
 
     const
       TransformModes = [
@@ -274,10 +273,23 @@ type
       var aShow: Boolean);
     procedure InspectorLayoutFilter(Sender: TObject; AEditor: TPropertyEditor;
       var aShow: Boolean);
-    procedure InspectorOtherFilter(Sender: TObject; AEditor: TPropertyEditor;
-      var aShow: Boolean);
     procedure MarkModified;
+    function UndoMessageModified(const Sel: TPersistent;
+      const ModifiedProperty, ModifiedValue: String; const SelectedCount: Integer): String;
+    { PropertyGridModified and PropertyEditorModified are called when
+      something changes in the design.
+      PropertyGridModified and PropertyEditorModified are both called when
+      something changes within Object Inspector basic features
+      (such as editing string, boolean, enum or numeric values)
+      In this case PropertyEditorModified usually comes first.
+      In case something changed outside of Object inspector (e.g. drag-and-drops,
+      rename components in treeview, add components, etc.)
+      only PropertyGridModified is called
+      In case a custom dialog is used to change a value
+      (e.g. a Color picker, TStrings editor, Open File dialogue, etc.)
+      then only PropertyEditorModified is called. }
     procedure PropertyGridModified(Sender: TObject);
+    procedure PropertyEditorModified(Sender: TObject);
     { Is Child selectable and visible in hierarchy. }
     class function Selectable(const Child: TComponent): Boolean; static;
     { Is Child deletable by user (this implies it is also selectable). }
@@ -319,7 +331,7 @@ type
     procedure BeforeProposeSaveDesign;
     procedure AddComponent(const ComponentClass: TComponentClass;
       const ComponentOnCreate: TNotifyEvent);
-    function AddComponent(const ParentComponent:TComponent; const ComponentClass: TComponentClass;
+    function AddComponent(const ParentComponent: TComponent; const ComponentClass: TComponentClass;
       const ComponentOnCreate: TNotifyEvent): TComponent;
     procedure DeleteComponent;
     procedure CopyComponent;
@@ -986,11 +998,6 @@ begin
   Inspector[itLayout].Align := alBottom;
   Inspector[itLayout].AnchorToNeighbour(akTop, 0, PanelLayoutTop);
 
-  Inspector[itOther] := CommonInspectorCreate;
-  Inspector[itOther].Parent := TabOther;
-  Inspector[itOther].OnEditorFilter := @InspectorOtherFilter;
-  Inspector[itOther].Filter := tkProperties;
-
   Inspector[itAll] := CommonInspectorCreate;
   Inspector[itAll].Parent := TabAll;
   Inspector[itAll].Filter := tkProperties;
@@ -1178,6 +1185,7 @@ begin
 
   // Allows object inspectors to find matching components, e.g. when editing Viewport.Items.MainScene
   PropertyEditorHook.LookupRoot := DesignOwner;
+  PropertyEditorHook.AddHandlerModified(@PropertyEditorModified);
 
   UpdateDesign;
   OnUpdateFormCaption(Self);
@@ -1190,15 +1198,25 @@ var
 begin
   NewDesignOwner := TComponent.Create(Self);
 
-  Mime := URIMimeType(NewDesignUrl);
-  if Mime = 'text/x-castle-user-interface' then
-    NewDesignRoot := UserInterfaceLoad(NewDesignUrl, NewDesignOwner)
-  else
-  if Mime = 'text/x-castle-transform' then
-    NewDesignRoot := TransformLoad(NewDesignUrl, NewDesignOwner)
-  else
-    raise Exception.CreateFmt('Unrecognized file extension %s (MIME type %s)',
-      [ExtractFileExt(NewDesignUrl), Mime]);
+  try
+    Mime := URIMimeType(NewDesignUrl);
+    if Mime = 'text/x-castle-user-interface' then
+      NewDesignRoot := UserInterfaceLoad(NewDesignUrl, NewDesignOwner)
+    else
+    if Mime = 'text/x-castle-transform' then
+      NewDesignRoot := TransformLoad(NewDesignUrl, NewDesignOwner)
+    else
+      raise Exception.CreateFmt('Unrecognized file extension %s (MIME type %s)',
+        [ExtractFileExt(NewDesignUrl), Mime]);
+  except
+    { Testcase: try to load using UserInterfaceLoad a file
+      that has TCastleTransform inside. UserInterfaceLoad makes EInvalidCast. }
+    on E: Exception do
+    begin
+      E.Message := 'Error when loading ' + URIDisplay(NewDesignUrl) + ': ' + E.Message;
+      raise;
+    end;
+  end;
 
   UndoSystem.ClearUndoHistory;
 
@@ -1258,7 +1276,7 @@ begin
   AddComponent(ParentComponent, ComponentClass, ComponentOnCreate);
 end;
 
-function TDesignFrame.AddComponent(const ParentComponent:TComponent; const ComponentClass: TComponentClass;
+function TDesignFrame.AddComponent(const ParentComponent: TComponent; const ComponentClass: TComponentClass;
   const ComponentOnCreate: TNotifyEvent): TComponent;
 
   procedure FinishAddingComponent(const NewComponent: TComponent);
@@ -1911,7 +1929,7 @@ begin
     { Show=true when Instance is some class used for subcomponents,
       like TCastleVector3Persistent, TBorder, TCastleImagePersistent... }
     if (not (Instance is TCastleComponent)) or
-       (TCastleComponent(Instance).PropertySection(PropertyName) = Section) then
+       (Section in TCastleComponent(Instance).PropertySections(PropertyName)) then
     begin
       AShow := true;
       Exit;
@@ -1946,22 +1964,39 @@ begin
   InspectorFilter(Sender, AEditor, AShow, psLayout);
 end;
 
-procedure TDesignFrame.InspectorOtherFilter(Sender: TObject;
-  AEditor: TPropertyEditor; var aShow: Boolean);
-begin
-  InspectorFilter(Sender, AEditor, AShow, psOther);
-end;
-
-procedure TDesignFrame.PropertyGridModified(Sender: TObject);
+function TDesignFrame.UndoMessageModified(const Sel: TPersistent;
+  const ModifiedProperty, ModifiedValue: String; const SelectedCount: Integer): String;
 const
   { Unreadable chars are defined like in SReplaceChars.
     Note they include newlines, we don't want to include newlines in undo description,
     as it would make menu item look weird (actually multiline on GTK2). }
   UnreadableChars = [Low(AnsiChar) .. Pred(' '), #128 .. High(AnsiChar)];
 var
+  ToValue: String;
+begin
+  if (Length(ModifiedValue) < 24) and (CharsPos(UnreadableChars, ModifiedValue) = 0) then
+    ToValue := ' to ' + ModifiedValue
+  else
+    ToValue := '';
+
+  { Right now, when SelectedCount = 1 then we know that Sel <> nil
+    (but it is better to not depend on it).
+    But it may not be TComponent, in case when changing property like X
+    of TCastleVector3Persistent. }
+  if (SelectedCount = 1) and
+     (Sel is TComponent) then
+    Result := 'Change ' + TComponent(Sel).Name + '.' + ModifiedProperty + ToValue
+  else
+  if SelectedCount > 1 then
+    Result := 'Change ' + ModifiedProperty + ToValue + ' in multiple components'
+  else
+    Result := 'Change ' + ModifiedProperty + ToValue;
+end;
+
+procedure TDesignFrame.PropertyGridModified(Sender: TObject);
+var
   Sel: TComponent;
   UI: TCastleUserInterface;
-  SenderRowName, SenderRowValue, UndoDescription: String;
 begin
   { Workaround possible ControlsTree.Selected = nil when the user deselects
     the currently edited component by clicking somewhere else.
@@ -2001,29 +2036,43 @@ begin
     otherwise we would record an undo for every OnMotion of dragging. }
   if not UndoSystem.ScheduleRecordUndoOnRelease then
   begin
-    { Sel may be nil in case multiple components change at once,
-      testcase: select multiple TCastleButton at once and change Toggle property. }
-    if Sel <> nil then
-      UndoDescription := 'Change ' + Sel.Name
-    else
-      UndoDescription := 'Change ';
-
     if Sender is TOICustomPropertyGrid then
     begin
-      SenderRowName := TOICustomPropertyGrid(Sender).GetActiveRow.Name;
-      SenderRowValue := TOICustomPropertyGrid(Sender).CurrentEditValue;
-      if CharsPos(UnreadableChars, SenderRowValue) = 0 then
-        UndoDescription := UndoDescription + '.' + SenderRowName + ' to ' + SenderRowValue
-      else
-        UndoDescription := UndoDescription + '.' + SenderRowName;
-      RecordUndo(UndoDescription, ucHigh, TOICustomPropertyGrid(Sender).ItemIndex);
+      RecordUndo(
+        UndoMessageModified(Sel, TOICustomPropertyGrid(Sender).GetActiveRow.Name,
+        TOICustomPropertyGrid(Sender).CurrentEditValue, ControlsTree.SelectionCount),
+        ucHigh, TOICustomPropertyGrid(Sender).ItemIndex);
     end else
       { Sender is nil when PropertyGridModified is called
         by ModifiedOutsideObjectInspector. }
-      RecordUndo(UndoDescription, ucLow);
+      if Sel <> nil then
+        RecordUndo('Change ' + Sel.Name, ucLow)
+      else
+      if ControlsTree.SelectionCount > 1 then
+        RecordUndo('Change multiple components', ucLow)
+      else
+        RecordUndo('', ucLow)
   end;
 
   MarkModified;
+end;
+
+procedure TDesignFrame.PropertyEditorModified(Sender: TObject);
+var
+  Sel: TPersistent;
+begin
+  if Sender is TPropertyEditor then
+  begin
+    if TPropertyEditor(Sender).PropCount = 1 then
+      Sel := TPropertyEditor(Sender).GetComponent(0)
+    else
+      Sel := nil;
+    RecordUndo(
+      UndoMessageModified(Sel, TPropertyEditor(Sender).GetName,
+        TPropertyEditor(Sender).GetValue, TPropertyEditor(Sender).PropCount),
+      ucHigh);
+  end else
+    raise EInternalError.Create('PropertyEditorModified can only be called with TPropertyEditor as a Sender.');
 end;
 
 procedure TDesignFrame.RecordUndo(const UndoComment: String;
@@ -2341,7 +2390,7 @@ begin
     { Without this check, one could change Sel.Name to empty ('').
       Although TComponent.SetName checks that it's a valid Pascal identifier already,
       but it also explicitly allows to set Name = ''.
-      Object inspector has special code to secure from empty Name 
+      Object inspector has special code to secure from empty Name
       (in TComponentNamePropertyEditor.SetValue), so we need a similar check here. }
     if not IsValidIdent(Node.Text) then
       raise Exception.Create(Format(oisComponentNameIsNotAValidIdentifier, [Node.Text]));
@@ -2349,9 +2398,9 @@ begin
     ModifiedOutsideObjectInspector(UndoComment, ucHigh); // It'd be good if we set "ItemIndex" to index of "name" field, but there doesn't seem to be an easy way to
   finally
     { This method must set Node.Text, to cleanup after ControlsTreeEditing + user editing.
-      - If the name was correct, then "Sel.Name := " goes without exception, 
+      - If the name was correct, then "Sel.Name := " goes without exception,
         and we want to show new name + class name.
-      - If the name was not correct, then "Sel.Name := " raises exception, 
+      - If the name was not correct, then "Sel.Name := " raises exception,
         and we want to show old name + class name. }
     Node.Text := ComponentCaption(Sel);
   end;
@@ -3032,29 +3081,54 @@ end;
 
 function TDesignFrame.ProposeName(const ComponentClass: TComponentClass;
   const ComponentsOwner: TComponent): String;
+
+  { Cleanup S (right now, always taken from some ClassName)
+    to be a nice component name, which also must make it a valid Pascal identifier. }
+  function CleanComponentName(const S: String): String;
+  begin
+    Result := S;
+
+    // remove common prefixes
+    if IsPrefix('TCastleUserInterface', Result, true) then
+      Result := PrefixRemove('TCastleUserInterface', Result, true)
+    else
+    if IsPrefix('TCastle', Result, true) then
+      Result := PrefixRemove('TCastle', Result, true)
+    else
+    if IsPrefix('T', Result, true) then
+      Result := PrefixRemove('T', Result, true);
+
+    // move 2D and 3D to the back, as component name cannot start with a number
+    if IsPrefix('2D', Result, true) then
+      Result := PrefixRemove('2D', Result, true) + '2D';
+    if IsPrefix('3D', Result, true) then
+      Result := PrefixRemove('3D', Result, true) + '3D';
+
+    // in case the replacements above made '', fix it (can happen in case of TCastleUserInterface)
+    if Result = '' then
+      Result := 'Group';
+
+    if SCharIs(Result, 1, ['0'..'9']) then
+      Result := 'Component' + Result;
+  end;
+
 var
   ResultBase: String;
   I: Integer;
 begin
-  ResultBase := ComponentClass.ClassName;
+  ResultBase := CleanComponentName(ComponentClass.ClassName);
 
-  // remove common prefixes
-  if IsPrefix('TCastleUserInterface', ResultBase, true) then
-    ResultBase := PrefixRemove('TCastleUserInterface', ResultBase, true)
-  else
-  if IsPrefix('TCastle', ResultBase, true) then
-    ResultBase := PrefixRemove('TCastle', ResultBase, true)
-  else
-  if IsPrefix('T', ResultBase, true) then
-    ResultBase := PrefixRemove('T', ResultBase, true);
-
-  // remove 2D, as component name cannot start with that
-  if IsPrefix('2D', ResultBase, true) then
-    ResultBase := PrefixRemove('2D', ResultBase, true);
-
-  // in case the replacements above made '', fix it (can happen in case of TCastleUserInterface)
-  if ResultBase = '' then
-    ResultBase := 'Group';
+  { A simple test of the CleanComponentName routine.
+    This is *not* a good place for such automated test, but for now it was simplest to put it here. }
+  {
+  Assert(CleanComponentName('TSomething') = 'Something');
+  Assert(CleanComponentName('TCastleUserInterface') = 'Group');
+  Assert(CleanComponentName('TCastleUserInterfaceButton') = 'Button');
+  Assert(CleanComponentName('TCastleSomething') = 'Something');
+  Assert(CleanComponentName('TCastle2DStuff') = 'Stuff2D');
+  Assert(CleanComponentName('TCastle3DStuff') = 'Stuff3D');
+  Assert(CleanComponentName('TCastle4DProcessing') = 'Component4DProcessing');
+  }
 
   // make unique
   I := 1;
