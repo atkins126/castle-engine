@@ -236,9 +236,9 @@ implementation
 uses CastleClassUtils, CastleImages, CastleURIUtils, CastleStringUtils,
   X3DLoadInternalGEO, X3DLoadInternal3DS, X3DLoadInternalOBJ,
   X3DLoadInternalCollada, X3DLoadInternalSpine, X3DLoadInternalSTL,
-  X3DLoadInternalMD3, X3DLoadInternalGLTF, X3DLoadInternalStarling,
-  X3DLoadInternalImage, X3DLoadInternalCocos2d,
-  CastleInternalNodeInterpolator, CastleDownload;
+  X3DLoadInternalMD3, X3DLoadInternalGLTF, X3DLoadInternalImage,
+  X3DLoadInternalCocos2d, CastleInternalNodeInterpolator,
+  CastleInternalSpritesheet, CastleDownload;
 
 { Load a sequence of nodes to an animation suitable for TNodeInterpolator.
   Allows to read sequence of static models as an animation,
@@ -459,8 +459,9 @@ begin
     Result := LoadGLTF(Stream, BaseUrl)
   else
 
-  if MimeType = 'application/x-starling-sprite-sheet' then
-    Result := LoadStarlingSpriteSheet(Stream, BaseUrl)
+  if (MimeType = 'application/x-castle-sprite-sheet') or
+     (MimeType = 'application/x-starling-sprite-sheet') then
+    Result := LoadCastleSpriteSheet(Stream, BaseUrl)
   else
 
   if (MimeType = 'application/x-plist') or
@@ -487,7 +488,7 @@ begin
   ImageExtensions := LoadImage_FileFilters.AllExtensions;
 
   Result :=   'All Files|*|' +
-    '*All Scenes|*.wrl;*.wrl.gz;*.wrz;*.x3d;*.x3dz;*.x3d.gz;*.x3dv;*.x3dvz;*.x3dv.gz;*.kanim;*.castle-anim-frames;*.dae;*.iv;*.3ds;*.md3;*.obj;*.geo;*.json;*.stl;*.glb;*.gltf;*.starling-xml;*.cocos2d-plist;*.plist;' + ImageExtensions + '|' +
+    '*All Scenes|*.wrl;*.wrl.gz;*.wrz;*.x3d;*.x3dz;*.x3d.gz;*.x3dv;*.x3dvz;*.x3dv.gz;*.kanim;*.castle-anim-frames;*.dae;*.iv;*.3ds;*.md3;*.obj;*.geo;*.json;*.stl;*.glb;*.gltf;*.castle-sprite-sheet;*.starling-xml;*.cocos2d-plist;*.plist;' + ImageExtensions + '|' +
     'VRML (*.wrl, *.wrl.gz, *.wrz)|*.wrl;*.wrl.gz;*.wrz|' +
     { TODO:
       and X3D binary (*.x3db;*.x3db.gz)
@@ -504,6 +505,7 @@ begin
     'Videoscape (*.geo)|*.geo|' +
     'Spine animation (*.json)|*.json|' +
     'Standard Triangle Language (*.stl)|*.stl|' +
+    'Castle Sprite Sheet (*.castle-sprite-sheet)|*.castle-sprite-sheet|' +
     'Starling Sprite Sheet (*.starling-xml)|*.starling-xml|' +
     'Cocos2d Sprite Sheet (*.cocos2d-plist, *.plist)|*.cocos2d-plist;*.plist|' +
     { Uncomment to see version with extensions - but filter combo is very long then }

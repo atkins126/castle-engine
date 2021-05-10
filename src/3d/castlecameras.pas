@@ -1125,6 +1125,7 @@ type
       FRotationEnabled: Boolean;
       FZoomEnabled: Boolean;
       FDragMoveSpeed, FKeysMoveSpeed: Single;
+      FExactMovement: Boolean;
       { Speed of rotations. Always zero when RotationAccelerate = false.
 
         This could be implemented as a quaternion,
@@ -1376,6 +1377,23 @@ type
       hold rotation keys to rotate. }
     property RotationAccelerate: boolean
       read FRotationAccelerate write SetRotationAccelerate default true;
+
+    { In orthographic projection with standard direction/up,
+      move the camera exactly as many units as the mouse position change indicates.
+      Makes the movemement in standard orthographic view most natural. }
+    property ExactMovement: Boolean read FExactMovement write FExactMovement default true;
+  end;
+
+  { Navigation most suitable for 2D viewports
+    (with orthographic projection and standard direction/up: -Z/+Y). }
+  TCastle2DNavigation = class(TCastleExamineNavigation)
+  public
+    constructor Create(AOwner: TComponent); override;
+
+    property MouseButtonMove default buttonLeft;
+    property MouseButtonZoom default buttonMiddle;
+  published
+    property RotationEnabled default false;
   end;
 
   TCastleWalkNavigation = class;
@@ -2199,6 +2217,17 @@ begin
   {$ifdef CASTLE_REGISTER_ALL_COMPONENTS_IN_LAZARUS}
   RegisterComponents('Castle', [TCastleExamineNavigation, TCastleWalkNavigation]);
   {$endif}
+end;
+
+{ TCastle2DNavigation -------------------------------------------------------- }
+
+constructor TCastle2DNavigation.Create(AOwner: TComponent);
+begin
+  inherited Create(AOwner);
+
+  RotationEnabled := false;
+  MouseButtonMove := buttonLeft;
+  MouseButtonZoom := buttonMiddle;
 end;
 
 { TCastlePerspective --------------------------------------------------------- }
@@ -3072,6 +3101,7 @@ begin
   FMouseButtonRotate := buttonLeft;
   FMouseButtonMove := buttonMiddle;
   FMouseButtonZoom := buttonRight;
+  FExactMovement := true;
 
   for I := 0 to 2 do
     for B := false to true do
@@ -3731,11 +3761,26 @@ begin
      (not GoodModelBox.IsEmpty) and
      (MouseButtonMove = DraggingMouseButton) then
   begin
-    Size := GoodModelBox.AverageSize;
-    Translation := Translation - Vector3(
-      DragMoveSpeed * Size * (Event.OldPosition[0] - Event.Position[0]) / (2*MoveDivConst),
-      DragMoveSpeed * Size * (Event.OldPosition[1] - Event.Position[1]) / (2*MoveDivConst),
-      0);
+    if ExactMovement and
+       (Camera.ProjectionType = ptOrthographic) and
+       TVector3.Equals(Camera.Direction, DefaultCameraDirection) and
+       TVector3.Equals(Camera.Up, DefaultCameraUp) and
+       (InternalViewport <> nil) then
+    begin
+      Translation := Translation + Vector3(
+        (InternalViewport as TCastleViewport).PositionTo2DWorld(Event.Position, true) -
+        (InternalViewport as TCastleViewport).PositionTo2DWorld(Event.OldPosition, true),
+        0);
+    end else
+    begin
+      Size := GoodModelBox.AverageSize;
+      Translation := Translation - Vector3(
+        DragMoveSpeed * Size * (Event.OldPosition[0] - Event.Position[0])
+        / (2 * MoveDivConst),
+        DragMoveSpeed * Size * (Event.OldPosition[1] - Event.Position[1])
+        / (2 * MoveDivConst),
+        0);
+    end;
     Result := ExclusiveEvents;
   end;
 end;
@@ -5619,5 +5664,6 @@ end;
 
 initialization
   RegisterSerializableComponent(TCastleExamineNavigation, 'Examine Navigation');
+  RegisterSerializableComponent(TCastle2DNavigation, '2D Navigation');
   RegisterSerializableComponent(TCastleWalkNavigation, 'Walk Navigation');
 end.
