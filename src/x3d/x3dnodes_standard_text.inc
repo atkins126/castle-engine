@@ -16,9 +16,6 @@
 {$ifdef read_interface}
   { Base node type for all font style nodes. }
   TAbstractFontStyleNode = class(TAbstractNode)
-  public
-    procedure CreateNode; override;
-
     {$I auto_generated_node_helpers/x3dnodes_x3dfontstylenode.inc}
   end;
 
@@ -28,13 +25,16 @@
   { Font justification that can be specified by a TFontStyleNode. }
   TX3DFontJustify = (fjFirst, fjBegin, fjMiddle, fjEnd);
 
+  { Font style that can be specified by a @link(TFontStyleNode.Style). }
+  TX3DFontStyle = (fsPlain, fsBold, fsItalic, fsBoldItalic);
+
   { Defines the size, family, style and other properties used for @link(TTextNode). }
   TFontStyleNode = class(TAbstractFontStyleNode)
   strict private
     JustifyWarningUppercaseDone, JustifyWarningObsoleteDone,
       JustifyWarningNotSupportedDone: boolean;
-    function GetBlending: boolean;
-    procedure SetBlending(const Value: boolean);
+    FCustomFont: TCastleFont;
+    FCustomFontObserver: TFreeNotificationObserver;
     function StringToJustify(const S: string;
       const DefaultValue: TX3DFontJustify): TX3DFontJustify;
     function GetFamily: TX3DFontFamily;
@@ -47,6 +47,8 @@
     procedure SetJustify(const Value: TX3DFontJustify);
     function GetJustifyMinor: TX3DFontJustify;
     procedure SetJustifyMinor(const Value: TX3DFontJustify);
+    procedure SetCustomFont(const Value: TCastleFont);
+    procedure CustomFontFreeNotification(const Sender: TFreeNotificationObserver);
   public
     const
       DefaultSize = 1.0;
@@ -58,48 +60,14 @@
       DefaultJustifyMinor = fjFirst;
       DefaultBlending = true;
 
-    procedure CreateNode; override;
-    class function ClassX3DType: string; override;
+    constructor Create(const AX3DName: string = ''; const ABaseUrl: string = ''); override;
+    destructor Destroy; override;
 
-    strict private FFdFamily: TMFString;
-    public property FdFamily: TMFString read FFdFamily;
     property Family: TX3DFontFamily read GetFamily write SetFamily;
-
-    strict private FFdHorizontal: TSFBool;
-    public property FdHorizontal: TSFBool read FFdHorizontal;
-
-    strict private FFdJustify: TMFString;
-    public property FdJustify: TMFString read FFdJustify;
     property Justify: TX3DFontJustify read GetJustify write SetJustify;
     property JustifyMinor: TX3DFontJustify read GetJustifyMinor write SetJustifyMinor;
-
-    {$ifndef CASTLE_SLIM_NODES}
-    strict private FFdLanguage: TSFString;
-    public property FdLanguage: TSFString read FFdLanguage;
-
-    strict private FFdLeftToRight: TSFBool;
-    public property FdLeftToRight: TSFBool read FFdLeftToRight;
-    {$endif}
-
-    strict private FFdSize: TSFFloat;
-    public property FdSize: TSFFloat read FFdSize;
-
-    strict private FFdSpacing: TSFFloat;
-    public property FdSpacing: TSFFloat read FFdSpacing;
-
-    strict private FFdStyle: TSFString;
-    public property FdStyle: TSFString read FFdStyle;
     property Bold: boolean read GetBold write SetBold;
     property Italic: boolean read GetItalic write SetItalic;
-
-    {$ifndef CASTLE_SLIM_NODES}
-    strict private FFdTopToBottom: TSFBool;
-    public property FdTopToBottom: TSFBool read FFdTopToBottom;
-    {$endif}
-
-    strict private FFdBlending: TSFBool;
-    public property FdBlending: TSFBool read FFdBlending;
-    property Blending: boolean read GetBlending write SetBlending;
 
     class function ForVRMLVersion(const Version: TX3DVersion): boolean;
       override;
@@ -107,7 +75,7 @@
     type
       TFontEvent = procedure (const FontStyle: TFontStyleNode; var Font: TTextureFontData) of object;
 
-    { Adjust the font used for a given FontStyle node.
+    { Adjust the font.
       Assign here a callback which can modify a font.
       You can look at any font style properties to decide how to adjust
       the font, like @link(Bold), @link(Italic), @link(Family).
@@ -124,11 +92,20 @@
       In the first case, remember that it is your resposibility
       to free this font later, but only after all possible Text nodes
       using this font are destroyed. }
-    class var OnFont: TFontEvent;
+    class var OnFont: TFontEvent
+      deprecated 'use TFontStyleNode.CustomFont or TCastleText.CustomFont';
 
     { Font used by this node, determined by our fields (like @link(Bold))
       and @link(OnFont). }
     function Font: TTextureFontData;
+
+    { Adjust the font.
+
+      TODO: Currently this only allows TCastleFont.
+      In the future it should allow any TCastleAbstractFont,
+      like TCastleFontFamily (thus have different options for bold/italic variants)
+      or TCastleBitmapFont. }
+    property CustomFont: TCastleFont read FCustomFont write SetCustomFont;
 
     {$I auto_generated_node_helpers/x3dnodes_fontstyle.inc}
   end;
@@ -139,45 +116,8 @@
   strict private
     FFontTextureNode: TPixelTextureNode;
     function Font: TTextureFontData;
-    function GetFontStyle: TFontStyleNode;
-    procedure SetFontStyle(const Value: TFontStyleNode);
   public
-    procedure CreateNode; override;
     destructor Destroy; override;
-    class function ClassX3DType: string; override;
-
-    strict private FFdFontStyle: TSFNode;
-    public property FdFontStyle: TSFNode read FFdFontStyle;
-
-    strict private FFdLength: TMFFloat;
-    public property FdLength: TMFFloat read FFdLength;
-
-    strict private FFdMaxExtent: TSFFloat;
-    public property FdMaxExtent: TSFFloat read FFdMaxExtent;
-
-    strict private FFdMaxDisplayChars: TSFInt32;
-    public property FdMaxDisplayChars: TSFInt32 read FFdMaxDisplayChars;
-
-    strict private FFdString: TMFString;
-    public property FdString: TMFString read FFdString;
-
-    { Event out } { }
-    strict private FEventLineBounds: TMFVec2fEvent;
-    public property EventLineBounds: TMFVec2fEvent read FEventLineBounds;
-
-    { Event out } { }
-    strict private FEventOrigin: TSFVec3fEvent;
-    public property EventOrigin: TSFVec3fEvent read FEventOrigin;
-
-    { Event out } { }
-    strict private FEventTextBounds: TSFVec2fEvent;
-    public property EventTextBounds: TSFVec2fEvent read FEventTextBounds;
-
-    strict private FFdSolid: TSFBool;
-    public property FdSolid: TSFBool read FFdSolid;
-
-    strict private FFdTexCoord: TSFNode;
-    public property FdTexCoord: TSFNode read FFdTexCoord;
     function TexCoordField: TSFNode; override;
 
     function Proxy(var State: TX3DGraphTraverseState;
@@ -188,16 +128,11 @@
     function BoundingBox(State: TX3DGraphTraverseState;
       ProxyGeometry: TAbstractGeometryNode; ProxyState: TX3DGraphTraverseState): TBox3D; override;
 
-    { The font rendering style. Returns @nil if not assigned,
-      or if the underlying X3D field has invalid node type assigned. }
-    property FontStyle: TFontStyleNode read GetFontStyle write SetFontStyle;
-
     function SolidField: TSFBool; override;
     function FontTextureNode: TAbstractTexture2DNode; override;
 
-    { Force recalculating the shape when font changed.
-      For now, we don't detect font changes (when TFontStyleNode.OnFont
-      returns something different) outselves. }
+    { Force recalculating the shape and font texture.
+      Call this when TFontStyleNode.CustomFont, TFontStyleNode.OnFont returns something different. }
     procedure FontChanged;
 
     {$I auto_generated_node_helpers/x3dnodes_text.inc}
@@ -206,355 +141,8 @@
 {$endif read_interface}
 
 {$ifdef read_implementation}
-procedure TAbstractFontStyleNode.CreateNode;
-begin
-  inherited;
 
-  DefaultContainerField := 'fontStyle';
-end;
-
-procedure TFontStyleNode.CreateNode;
-begin
-  inherited;
-
-  FFdFamily := TMFString.Create(Self, false, 'family', ['SERIF']);
-   FdFamily.ChangeAlways := chFontStyle;
-  AddField(FFdFamily);
-
-  FFdHorizontal := TSFBool.Create(Self, false, 'horizontal', true);
-   FdHorizontal.ChangeAlways := chFontStyle;
-  AddField(FFdHorizontal);
-
-  FFdJustify := TMFString.Create(Self, false, 'justify', ['BEGIN']);
-   FdJustify.ChangeAlways := chFontStyle;
-  AddField(FFdJustify);
-  { X3D specification comment: ["BEGIN","END","FIRST","MIDDLE",""] }
-
-  {$ifndef CASTLE_SLIM_NODES}
-  FFdLanguage := TSFString.Create(Self, false, 'language', '');
-   FdLanguage.ChangeAlways := chFontStyle;
-  AddField(FFdLanguage);
-
-  FFdLeftToRight := TSFBool.Create(Self, false, 'leftToRight', true);
-   FdLeftToRight.ChangeAlways := chFontStyle;
-  AddField(FFdLeftToRight);
-  {$endif}
-
-  FFdSize := TSFFloat.Create(Self, false, 'size', DefaultSize);
-   FdSize.ChangeAlways := chFontStyle;
-  AddField(FFdSize);
-  { X3D specification comment: (0,Inf) }
-
-  FFdSpacing := TSFFloat.Create(Self, false, 'spacing', DefaultSpacing);
-   FdSpacing.ChangeAlways := chFontStyle;
-  AddField(FFdSpacing);
-  { X3D specification comment: [0,Inf) }
-
-  FFdStyle := TSFString.Create(Self, false, 'style', 'PLAIN');
-   FdStyle.ChangeAlways := chFontStyle;
-  AddField(FFdStyle);
-  { X3D specification comment: ["PLAIN"|"BOLD"|"ITALIC"|"BOLDITALIC"|""] }
-
-  {$ifndef CASTLE_SLIM_NODES}
-  FFdTopToBottom := TSFBool.Create(Self, false, 'topToBottom', true);
-   FdTopToBottom.ChangeAlways := chFontStyle;
-  AddField(FFdTopToBottom);
-  {$endif}
-
-  FFdBlending := TSFBool.Create(Self, false, 'blending', DefaultBlending);
-   FdBlending.ChangeAlways := chFontStyle;
-  AddField(FFdBlending);
-end;
-
-class function TFontStyleNode.ClassX3DType: string;
-begin
-  Result := 'FontStyle';
-end;
-
-class function TFontStyleNode.ForVRMLVersion(const Version: TX3DVersion): boolean;
-begin
-  Result := Version.Major >= 2;
-end;
-
-function TFontStyleNode.GetFamily: TX3DFontFamily;
-var
-  I: Integer;
-begin
-  for I := 0 to FdFamily.Items.Count - 1 do
-    if FdFamily.Items[I] = 'SERIF' then
-      Exit(ffSerif)
-    else
-    if FdFamily.Items[I] = 'SANS' then
-      Exit(ffSans)
-    else
-    if FdFamily.Items[I] = 'TYPEWRITER' then
-      Exit(ffTypeWriter)
-    else
-      WritelnWarning('VRML/X3D', 'Font family "' + FdFamily.Items[I] + '" not supported');
-
-  { If no supported values on FdFamily.Items then fall back to serif }
-  Result := ffSerif;
-end;
-
-procedure TFontStyleNode.SetFamily(const Value: TX3DFontFamily);
-const
-  FontFamilyNames: array [TX3DFontFamily] of string =
-  ('SERIF', 'SANS', 'TYPEWRITER');
-begin
-  FdFamily.Send(FontFamilyNames[Value]);
-end;
-
-const
-  StyleBold = 'BOLD';
-  StyleBoldItalic = 'BOLDITALIC';
-  StyleItalic = 'ITALIC';
-  StylePlain = 'PLAIN';
-  StyleString: array[boolean { bold ? }, boolean { italic ? }] of string =
-  ( (StylePlain, StyleItalic),
-    (StyleBold, StyleBoldItalic) );
-
-function TFontStyleNode.GetBold: boolean;
-var
-  S: string;
-begin
-  S := FdStyle.Value;
-  Result :=
-    (S = StyleBold) or
-    (S = StyleBoldItalic);
-
-  { This is the end of calculating Result.
-    But we would like to make a warning in case of invalid FdStyle
-    value, so we do check below. }
-
-  if not Result then
-  begin
-    if not (
-      (S = StyleItalic) or
-      (S = StylePlain) or
-      (S = '')) then
-      WritelnWarning('VRML/X3D', 'Font style "' + S + '" not supported');
-  end;
-end;
-
-procedure TFontStyleNode.SetBold(const Value: boolean);
-begin
-  FdStyle.Send(StyleString[Value, Italic]);
-end;
-
-function TFontStyleNode.GetItalic: boolean;
-var
-  S: string;
-begin
-  S := FdStyle.Value;
-  Result :=
-    (S = StyleItalic) or
-    (S = StyleBoldItalic);
-
-  { This is the end of calculating Result.
-    But we would like to make a warning in case of invalid FdStyle
-    value, so we do check below. }
-
-  if not Result then
-  begin
-    if not (
-      (S = StyleBold) or
-      (S = StylePlain) or
-      (S = '')) then
-      WritelnWarning('VRML/X3D', 'Font style "' + S + '" not supported');
-  end;
-end;
-
-procedure TFontStyleNode.SetItalic(const Value: boolean);
-begin
-  FdStyle.Send(StyleString[Bold, Value]);
-end;
-
-function TFontStyleNode.StringToJustify(const S: string;
-  const DefaultValue: TX3DFontJustify): TX3DFontJustify;
-const
-  SJustifyObsolete = 'Font justify "%s" should not be used in VRML >= 2.0, use "%s" instead';
-var
-  J: string;
-begin
-  { Some X3D models use lowercase names, like [http://instant-reality.com/]
-    test models. }
-  J := UpperCase(S);
-  if (J <> S) and not JustifyWarningUppercaseDone then
-  begin
-    WritelnWarning('VRML/X3D', Format('Font justify value "%s" should be specified in uppercase',
-      [S]));
-    JustifyWarningUppercaseDone := true;
-  end;
-
-  if J = ''       then Result := DefaultValue else
-  if J = 'BEGIN'  then Result := fjBegin else
-  if J = 'FIRST'  then Result := fjFirst else
-  if J = 'MIDDLE' then Result := fjMiddle else
-  if J = 'END'    then Result := fjEnd else
-
-  { Some X3D models use old justify names, like cic.nist.gov X3D demos. }
-  if J = 'LEFT' then
-  begin
-    if not JustifyWarningObsoleteDone then
-    begin
-      WritelnWarning('VRML/X3D', Format(SJustifyObsolete, ['LEFT', 'BEGIN']));
-      JustifyWarningObsoleteDone := true;
-    end;
-    Result := fjBegin;
-  end else
-  if J = 'CENTER' then
-  begin
-    if not JustifyWarningObsoleteDone then
-    begin
-      WritelnWarning('VRML/X3D', Format(SJustifyObsolete, ['CENTER', 'MIDDLE']));
-      JustifyWarningObsoleteDone := true;
-    end;
-    Result := fjMiddle;
-  end else
-  if J = 'RIGHT' then
-  begin
-    if not JustifyWarningObsoleteDone then
-    begin
-      WritelnWarning('VRML/X3D', Format(SJustifyObsolete, ['RIGHT', 'END']));
-      JustifyWarningObsoleteDone := true;
-    end;
-    Result := fjEnd;
-  end else
-
-  begin
-    Result := DefaultValue;
-    if not JustifyWarningNotSupportedDone then
-    begin
-      WritelnWarning('VRML/X3D', 'Font justify "' + S + '" not supported');
-      JustifyWarningNotSupportedDone := true;
-    end;
-  end;
-end;
-
-const
-  JustifyToString: array[TX3DFontJustify] of string =
-  ('FIRST', 'BEGIN', 'MIDDLE', 'END');
-
-function TFontStyleNode.GetJustify: TX3DFontJustify;
-begin
-  if FdJustify.Items.Count > 0 then
-    Result := StringToJustify(FdJustify.Items[0], DefaultJustify)
-  else
-    Result := DefaultJustify;
-end;
-
-function TFontStyleNode.GetJustifyMinor: TX3DFontJustify;
-begin
-  if FdJustify.Items.Count > 1 then
-    Result := StringToJustify(FdJustify.Items[1], DefaultJustifyMinor)
-  else
-    Result := DefaultJustifyMinor;
-end;
-
-procedure TFontStyleNode.SetJustify(const Value: TX3DFontJustify);
-begin
-  FdJustify.Send([JustifyToString[Value], JustifyToString[JustifyMinor]]);
-end;
-
-procedure TFontStyleNode.SetJustifyMinor(const Value: TX3DFontJustify);
-begin
-  FdJustify.Send([JustifyToString[Justify], JustifyToString[Value]]);
-end;
-
-function TFontStyleNode.GetBlending: boolean;
-begin
-  Result := FdBlending.Value;
-end;
-
-procedure TFontStyleNode.SetBlending(const Value: boolean);
-begin
-  FdBlending.Send(Value);
-end;
-
-procedure TTextNode.CreateNode;
-begin
-  inherited;
-
-  FFdFontStyle := TSFNode.Create(Self, true, 'fontStyle', [TAbstractFontStyleNode]);
-   FdFontStyle.ChangeAlways := chGeometry;
-  AddField(FFdFontStyle);
-
-  FFdLength := TMFFloat.Create(Self, true, 'length', []);
-   FdLength.ChangeAlways := chGeometry;
-  AddField(FFdLength);
-  { X3D specification comment: [0,Inf) }
-
-  FFdMaxExtent := TSFFloat.Create(Self, true, 'maxExtent', 0.0);
-   FdMaxExtent.ChangeAlways := chGeometry;
-  AddField(FFdMaxExtent);
-  { X3D specification comment: [0,Inf) }
-
-  FFdMaxDisplayChars := TSFInt32.Create(Self, true, 'maxDisplayChars', -1);
-   FdMaxDisplayChars.ChangeAlways := chGeometry;
-  AddField(FdMaxDisplayChars);
-
-  FFdString := TMFString.Create(Self, true, 'string', []);
-   FdString.ChangeAlways := chGeometry;
-  AddField(FFdString);
-
-  FEventLineBounds := TMFVec2fEvent.Create(Self, 'lineBounds', false);
-  AddEvent(FEventLineBounds);
-
-  FEventOrigin := TSFVec3fEvent.Create(Self, 'origin', false);
-  AddEvent(FEventOrigin);
-
-  FEventTextBounds := TSFVec2fEvent.Create(Self, 'textBounds', false);
-  AddEvent(FEventTextBounds);
-
-  FFdSolid := TSFBool.Create(Self, false, 'solid', false);
-   FdSolid.ChangeAlways := chGeometry;
-  AddField(FFdSolid);
-
-  FFdTexCoord := TSFNode.Create(Self, true, 'texCoord', [TTextureCoordinateGeneratorNode, TProjectedTextureCoordinateNode, TMultiTextureCoordinateNode]);
-   FdTexCoord.ChangeAlways := chGeometry;
-  AddField(FFdTexCoord);
-end;
-
-destructor TTextNode.Destroy;
-begin
-  if X3DCache <> nil then
-    X3DCache.FreeFontTexture(FFontTextureNode);
-  inherited;
-end;
-
-procedure TTextNode.FontChanged;
-begin
-  if X3DCache <> nil then
-    X3DCache.FreeFontTexture(FFontTextureNode);
-end;
-
-class function TTextNode.ClassX3DType: string;
-begin
-  Result := 'Text';
-end;
-
-function TTextNode.TexCoordField: TSFNode;
-begin
-  Result := FdTexCoord;
-end;
-
-function TTextNode.GetFontStyle: TFontStyleNode;
-begin
-  if (FdFontStyle.Value <> nil) and
-     (FdFontStyle.Value is TFontStyleNode) then
-    Result := TFontStyleNode(FdFontStyle.Value) else
-    Result := nil;
-end;
-
-procedure TTextNode.SetFontStyle(const Value: TFontStyleNode);
-begin
-  FdFontStyle.Send(Value);
-end;
-
-function TTextNode.SolidField: TSFBool;
-begin
-  Result := FdSolid;
-end;
+{ internal routine to create proxy ------------------------------------------- }
 
 {$ifdef BUGGY_AARCH64_OPTIMIZATIONS}
   {$optimization OFF}
@@ -607,6 +195,37 @@ var
       {$endif}
     end;
     Result := Result * (Font.RowHeight * Spacing);
+
+    { For JustifyMinor <> fjFirst add font descend,
+      to account for the fact that baseline is a bit higher than 0.
+
+      This means that (for JustifyMinor <> fjFirst) vertical level = 0 is not "baseline".
+      Vertical level = 0 is "where bounding box starts". This has advantages:
+
+      - It is similar behavior to TCastleLabel. So user has consistent behavior,
+        and you can even easily match TCastleLabel coordinates with TCastleText coordinates
+        in the viewport.
+      - It is more comfortable when you want to fit the text somewhere.
+        No text geometry goes underneath vertical level = 0, ever.
+      - This makes the fjBegin and fjEnd behave consistently,
+        and for both horizontal and vertical cases.
+        They all mean "this is the edge of the bounding box".
+
+      In contrast, fjFirst logic is a bit special.
+      It means that vertical level = 0 is "baseline".
+      This makes the bottom of the font special:
+
+      - Font may have some geometry below 0.
+      - This is unlike the horizontal fjFirst (that determines just "left edge of bbox"
+        and is equal to fjBegin).
+
+      Of course fjFirst (vertical level = 0 is "baseline") has one big advantage:
+      making larger/smaller Descend of the font doesn't shift where the baseline is rendered.
+
+      It matches Text_LocalBoundingBox logic, that also accounts for
+      JustifyMinor=fjFirst as a special case. }
+    if JustifyMinor <> fjFirst then
+      Result := Result + Font.Descend * Spacing;
   end;
 
 var
@@ -623,15 +242,7 @@ var
     if (EventOrigin <> nil) and
        (OriginalNode.Scene <> nil) then
     begin
-      { This is all simple, since we ignore topToBottom, leftToRight.
-        Also, we don't honour the rule that the upper line of the text
-        is exactly on Y = 0 (instead, our *row* (which is slightly higher
-        than the upper text line) is on Y = 0, this is documented
-        on [https://castle-engine.io/x3d_implementation_status.php]
-        by failed NIST test about it.
-
-        So the lacks of current Text rendering implementation
-        make this somewhat simple :) }
+      { TODO: We ignore topToBottom, leftToRight. }
 
       FinalRowHeight := Font.RowHeight * Spacing * YScale;
 
@@ -691,9 +302,10 @@ var
   end;
 
   { Print the string, by adding rectangles to current QuadSet.
-    This is somewhat analogous to printing straight in 2D done
-    by TCastleFont.Print and TDrawableImage.Draw. }
-  procedure Print(X, Y: Single; const S: string; const XScale, YScale: Single);
+    This is analogous to printing straight in 2D done by TCastleFont.Print.
+    Some pieces of code below are deliberately similar, and we prepare to make outlines
+    too. }
+  procedure Print(const X, Y: Single; const S: string; const XScale, YScale: Single);
 
     function ConvertCoordToExtraTex(const CoordIndex: Integer; const Coord: Single): Single;
     begin
@@ -703,15 +315,117 @@ var
         0, 1);
     end;
 
+  // TODO: Outline not done yet.
+  // Outline requires a different X3D shape for different color, or using ColorRGBA.
+  const
+    Outline = 0;
+    OutlineHighQuality = true;
+  var
+    ScreenX, ScreenY: Single;
+    G: TTextureFontData.TGlyph;
+
+    procedure GlyphDraw(const OutlineMoveX, OutlineMoveY: Integer);
+    var
+      ScreenRect, ImageRect, ExtraTexRect: TFloatRectangle;
+    begin
+      { Use a small margin around every glyph to allow bilinear
+        filtering to smoothly go from opaque to fully transparent
+        at glyph border. This prevents glyph border from ending suddenly,
+        it looks much better in the case of blending.
+
+        This cooperates with TTextureFontData.Create (used by
+        texture-font-to-pascal) that makes sure that each letter is
+        surrounded with a padding that allows such border,
+        see GlyphPadding in castletexturefontdata.pas. }
+      {$define EXTRA_GLYPH_SPACE}
+
+      ScreenRect := FloatRectangle(
+        XScale * (ScreenX - G.X + OutlineMoveX * Outline {$ifdef EXTRA_GLYPH_SPACE} - 0.5 {$endif}),
+        YScale * (ScreenY - G.Y + OutlineMoveY * Outline {$ifdef EXTRA_GLYPH_SPACE} - 0.5 {$endif}),
+        XScale * (G.Width  {$ifdef EXTRA_GLYPH_SPACE} + 1 {$endif}),
+        YScale * (G.Height {$ifdef EXTRA_GLYPH_SPACE} + 1 {$endif}));
+
+      ImageRect := FloatRectangle(
+        (G.ImageX {$ifdef EXTRA_GLYPH_SPACE} - 0.5 {$endif}) / Font.Image.Width,
+        (G.ImageY {$ifdef EXTRA_GLYPH_SPACE} - 0.5 {$endif}) / Font.Image.Height,
+        (G.Width  {$ifdef EXTRA_GLYPH_SPACE} + 1 {$endif}) / Font.Image.Width,
+        (G.Height {$ifdef EXTRA_GLYPH_SPACE} + 1 {$endif}) / Font.Image.Height);
+
+      ScreenRect.AddToCoords(OutCoord.Items, 0);
+      ImageRect.AddToCoords(OutTexCoord.Items);
+
+      { if we want extra texture coordinates, generate them knowing
+        ExtraTexOrigin and current Coord* values. This is enough,
+        see the specification:
+
+          The texture origin is at the origin of the first string,
+          as determined by the justification. The texture is scaled
+          equally in both S and T dimensions, with the font height
+          representing 1 unit. S increases to the right, and T increases up. }
+
+      if OutExtraTexCoord <> nil then
+      begin
+        ExtraTexRect := FloatRectangle(
+          ConvertCoordToExtraTex(0, ScreenRect.Left  ),
+          ConvertCoordToExtraTex(1, ScreenRect.Bottom),
+          ConvertCoordToExtraTex(0, ScreenRect.Right ) - ConvertCoordToExtraTex(0, ScreenRect.Left),
+          ConvertCoordToExtraTex(1, ScreenRect.Top   ) - ConvertCoordToExtraTex(1, ScreenRect.Bottom)
+        );
+        ExtraTexRect.AddToCoords(OutExtraTexCoord.Items);
+      end;
+    end;
+
   var
     C: TUnicodeChar;
     TextPtr: PChar;
     CharLen: Integer;
-    G: TTextureFontData.TGlyph;
-    CoordX0, CoordX1, CoordY0, CoordY1,
-      TexX0, TexX1, TexY0, TexY1,
-      ExtraTexX0, ExtraTexX1, ExtraTexY0, ExtraTexY1: Single;
   begin
+    { first pass, to render Outline. }
+
+    // TODO: Outline not done yet.
+    // Outline requires a different X3D shape for different color, or using ColorRGBA.
+    (*
+    if Outline <> 0 then
+    begin
+      ScreenX := X;
+      ScreenY := Y;
+
+      TextPtr := PChar(S);
+      C := UTF8CharacterToUnicode(TextPtr, CharLen);
+      while (C > 0) and (CharLen > 0) do
+      begin
+        Inc(TextPtr, CharLen);
+
+        G := Font.Glyph(C);
+        if G <> nil then
+        begin
+          if (G.Width <> 0) and (G.Height <> 0) then
+          begin
+            GlyphDraw(0, 0);
+            GlyphDraw(0, 2);
+            GlyphDraw(2, 2);
+            GlyphDraw(2, 0);
+
+            if OutlineHighQuality then
+            begin
+              GlyphDraw(1, 0);
+              GlyphDraw(1, 2);
+              GlyphDraw(0, 1);
+              GlyphDraw(2, 1);
+            end;
+          end;
+          ScreenX += G.AdvanceX + Outline * 2;
+          ScreenY += G.AdvanceY;
+        end;
+
+        C := UTF8CharacterToUnicode(TextPtr, CharLen);
+      end;
+    end;
+    *)
+
+    ScreenX := X;
+    ScreenY := Y;
+
     TextPtr := PChar(S);
     C := UTF8CharacterToUnicode(TextPtr, CharLen);
     while (C > 0) and (CharLen > 0) do
@@ -722,67 +436,16 @@ var
       if G <> nil then
       begin
         if (G.Width <> 0) and (G.Height <> 0) then
-        begin
-          { Use a small margin around every glyph to allow bilinear
-            filtering to smoothly go from opaque to fully transparent
-            at glyph border. This prevents glyph border from ending suddenly,
-            it looks much better in the case of blending.
-
-            This cooperates with TTextureFontData.Create (used by
-            texture-font-to-pascal) that makes sure that each letter is
-            surrounded with a padding that allows such border,
-            see GlyphPadding in castletexturefontdata.pas. }
-          {$define EXTRA_GLYPH_SPACE}
-
-          CoordX0 := X - G.X {$ifdef EXTRA_GLYPH_SPACE} - 0.5 {$endif};
-          CoordY0 := Y - G.Y {$ifdef EXTRA_GLYPH_SPACE} - 0.5 {$endif};
-          CoordX1 := CoordX0 + G.Width  {$ifdef EXTRA_GLYPH_SPACE} + 1 {$endif};
-          CoordY1 := CoordY0 + G.Height {$ifdef EXTRA_GLYPH_SPACE} + 1 {$endif};
-
-          CoordX0 := CoordX0 * XScale;
-          CoordX1 := CoordX1 * XScale;
-          CoordY0 := CoordY0 * YScale;
-          CoordY1 := CoordY1 * YScale;
-
-          OutCoord.Items.Add(Vector3(CoordX0, CoordY0, 0));
-          OutCoord.Items.Add(Vector3(CoordX1, CoordY0, 0));
-          OutCoord.Items.Add(Vector3(CoordX1, CoordY1, 0));
-          OutCoord.Items.Add(Vector3(CoordX0, CoordY1, 0));
-
-          TexX0 := (G.ImageX {$ifdef EXTRA_GLYPH_SPACE} - 0.5 {$endif}) / Font.Image.Width;
-          TexY0 := (G.ImageY {$ifdef EXTRA_GLYPH_SPACE} - 0.5 {$endif}) / Font.Image.Height;
-          TexX1 := (G.ImageX + G.Width  {$ifdef EXTRA_GLYPH_SPACE} + 1 {$endif}) / Font.Image.Width;
-          TexY1 := (G.ImageY + G.Height {$ifdef EXTRA_GLYPH_SPACE} + 1 {$endif}) / Font.Image.Height;
-
-          OutTexCoord.Items.Add(Vector2(TexX0, TexY0));
-          OutTexCoord.Items.Add(Vector2(TexX1, TexY0));
-          OutTexCoord.Items.Add(Vector2(TexX1, TexY1));
-          OutTexCoord.Items.Add(Vector2(TexX0, TexY1));
-
-          { if we want extra texture coordinates, generate them knowing
-            ExtraTexOrigin and current Coord* values. This is enough,
-            see the specification:
-
-              The texture origin is at the origin of the first string,
-              as determined by the justification. The texture is scaled
-              equally in both S and T dimensions, with the font height
-              representing 1 unit. S increases to the right, and T increases up. }
-
-          if OutExtraTexCoord <> nil then
-          begin
-            ExtraTexX0 := ConvertCoordToExtraTex(0, CoordX0);
-            ExtraTexY0 := ConvertCoordToExtraTex(1, CoordY0);
-            ExtraTexX1 := ConvertCoordToExtraTex(0, CoordX1);
-            ExtraTexY1 := ConvertCoordToExtraTex(1, CoordY1);
-
-            OutExtraTexCoord.Items.Add(Vector2(ExtraTexX0, ExtraTexY0));
-            OutExtraTexCoord.Items.Add(Vector2(ExtraTexX1, ExtraTexY0));
-            OutExtraTexCoord.Items.Add(Vector2(ExtraTexX1, ExtraTexY1));
-            OutExtraTexCoord.Items.Add(Vector2(ExtraTexX0, ExtraTexY1));
-          end;
-        end;
-        X := X + G.AdvanceX;
-        Y := Y + G.AdvanceY;
+          // TODO: Outline not done yet.
+          // Outline requires a different X3D shape for different color, or using ColorRGBA.
+          (*
+          if Outline <> 0 then
+            GlyphDraw(1, 1)
+          else
+          *)
+            GlyphDraw(0, 0);
+        ScreenX += G.AdvanceX + Outline * 2;
+        ScreenY += G.AdvanceY;
       end;
 
       C := UTF8CharacterToUnicode(TextPtr, CharLen);
@@ -849,18 +512,18 @@ var
   I: Integer;
   ExtraTexCoordField: TMFVec2f;
 begin
-  if FontStyle = nil then
+  if FontStyle is TFontStyleNode then // also checks FontStyle <> nil
+  begin
+    Size := TFontStyleNode(FontStyle).FdSize.Value;
+    Spacing := TFontStyleNode(FontStyle).FdSpacing.Value;
+    Justify := TFontStyleNode(FontStyle).Justify;
+    JustifyMinor := TFontStyleNode(FontStyle).JustifyMinor;
+  end else
   begin
     Size := TFontStyleNode.DefaultSize;
     Spacing := TFontStyleNode.DefaultSpacing;
     Justify := TFontStyleNode.DefaultJustify;
     JustifyMinor := TFontStyleNode.DefaultJustifyMinor;
-  end else
-  begin
-    Size := FontStyle.FdSize.Value;
-    Spacing := FontStyle.FdSpacing.Value;
-    Justify := FontStyle.Justify;
-    JustifyMinor := FontStyle.JustifyMinor;
   end;
 
   FaceSet := TQuadSetNode.Create(X3DName, BaseUrl);
@@ -924,9 +587,188 @@ end;
   {$info Workaround Aarch64 optimizer: TextProxy not optimized (end)}
 {$endif}
 
-function TTextNode.ProxyUsesOverTriangulate: boolean;
+{ constants ------------------------------------------------------------------ }
+
+const
+  FontStyleNames: array [TX3DFontStyle] of String =
+  ('PLAIN', 'BOLD', 'ITALIC', 'BOLDITALIC');
+
+  FontFamilyNames: array [TX3DFontFamily] of string =
+  ('SERIF', 'SANS', 'TYPEWRITER');
+
+  JustifyToString: array[TX3DFontJustify] of string =
+  ('FIRST', 'BEGIN', 'MIDDLE', 'END');
+
+{ TFontStyleNode ------------------------------------------------------------- }
+
+constructor TFontStyleNode.Create(const AX3DName: string = ''; const ABaseUrl: string = '');
 begin
-  Result := false;
+  inherited;
+  FCustomFontObserver := TFreeNotificationObserver.Create(nil);
+  FCustomFontObserver.OnFreeNotification := @CustomFontFreeNotification;
+end;
+
+destructor TFontStyleNode.Destroy;
+begin
+  FreeAndNil(FCustomFontObserver);
+  inherited;
+end;
+
+procedure TFontStyleNode.SetCustomFont(const Value: TCastleFont);
+begin
+  if FCustomFont <> Value then
+  begin
+    FCustomFont := Value;
+    FCustomFontObserver.Observed := Value;
+  end;
+end;
+
+procedure TFontStyleNode.CustomFontFreeNotification(const Sender: TFreeNotificationObserver);
+begin
+  FCustomFont := nil;
+end;
+
+class function TFontStyleNode.ForVRMLVersion(const Version: TX3DVersion): boolean;
+begin
+  Result := Version.Major >= 2;
+end;
+
+function TFontStyleNode.GetFamily: TX3DFontFamily;
+var
+  I: Integer;
+begin
+  for I := 0 to FdFamily.Items.Count - 1 do
+    if FdFamily.Items[I] = 'SERIF' then
+      Exit(ffSerif)
+    else
+    if FdFamily.Items[I] = 'SANS' then
+      Exit(ffSans)
+    else
+    if FdFamily.Items[I] = 'TYPEWRITER' then
+      Exit(ffTypeWriter)
+    else
+      WritelnWarning('VRML/X3D', 'Font family "' + FdFamily.Items[I] + '" not supported');
+
+  { If no supported values on FdFamily.Items then fall back to serif }
+  Result := ffSerif;
+end;
+
+procedure TFontStyleNode.SetFamily(const Value: TX3DFontFamily);
+begin
+  FdFamily.Send(FontFamilyNames[Value]);
+end;
+
+const
+  StyleEnum: array[boolean { bold ? }, boolean { italic ? }] of TX3DFontStyle =
+  ( (fsPlain, fsItalic),
+    (fsBold, fsBoldItalic) );
+
+function TFontStyleNode.GetBold: boolean;
+begin
+  Result := Style in [fsBold, fsBoldItalic];
+end;
+
+procedure TFontStyleNode.SetBold(const Value: boolean);
+begin
+  Style := StyleEnum[Value, Italic];
+end;
+
+function TFontStyleNode.GetItalic: boolean;
+begin
+  Result := Style in [fsItalic, fsBoldItalic];
+end;
+
+procedure TFontStyleNode.SetItalic(const Value: boolean);
+begin
+  Style := StyleEnum[Bold, Value];
+end;
+
+function TFontStyleNode.StringToJustify(const S: string;
+  const DefaultValue: TX3DFontJustify): TX3DFontJustify;
+const
+  SJustifyObsolete = 'Font justify "%s" should not be used in VRML >= 2.0, use "%s" instead';
+var
+  J: string;
+begin
+  { Some X3D models use lowercase names, like [http://instant-reality.com/]
+    test models. }
+  J := UpperCase(S);
+  if (J <> S) and not JustifyWarningUppercaseDone then
+  begin
+    WritelnWarning('VRML/X3D', Format('Font justify value "%s" should be specified in uppercase',
+      [S]));
+    JustifyWarningUppercaseDone := true;
+  end;
+
+  if J = ''       then Result := DefaultValue else
+  if J = 'BEGIN'  then Result := fjBegin else
+  if J = 'FIRST'  then Result := fjFirst else
+  if J = 'MIDDLE' then Result := fjMiddle else
+  if J = 'END'    then Result := fjEnd else
+
+  { Some X3D models use old justify names, like cic.nist.gov X3D demos. }
+  if J = 'LEFT' then
+  begin
+    if not JustifyWarningObsoleteDone then
+    begin
+      WritelnWarning('VRML/X3D', Format(SJustifyObsolete, ['LEFT', 'BEGIN']));
+      JustifyWarningObsoleteDone := true;
+    end;
+    Result := fjBegin;
+  end else
+  if J = 'CENTER' then
+  begin
+    if not JustifyWarningObsoleteDone then
+    begin
+      WritelnWarning('VRML/X3D', Format(SJustifyObsolete, ['CENTER', 'MIDDLE']));
+      JustifyWarningObsoleteDone := true;
+    end;
+    Result := fjMiddle;
+  end else
+  if J = 'RIGHT' then
+  begin
+    if not JustifyWarningObsoleteDone then
+    begin
+      WritelnWarning('VRML/X3D', Format(SJustifyObsolete, ['RIGHT', 'END']));
+      JustifyWarningObsoleteDone := true;
+    end;
+    Result := fjEnd;
+  end else
+
+  begin
+    Result := DefaultValue;
+    if not JustifyWarningNotSupportedDone then
+    begin
+      WritelnWarning('VRML/X3D', 'Font justify "' + S + '" not supported');
+      JustifyWarningNotSupportedDone := true;
+    end;
+  end;
+end;
+
+function TFontStyleNode.GetJustify: TX3DFontJustify;
+begin
+  if FdJustify.Items.Count > 0 then
+    Result := StringToJustify(FdJustify.Items[0], DefaultJustify)
+  else
+    Result := DefaultJustify;
+end;
+
+function TFontStyleNode.GetJustifyMinor: TX3DFontJustify;
+begin
+  if FdJustify.Items.Count > 1 then
+    Result := StringToJustify(FdJustify.Items[1], DefaultJustifyMinor)
+  else
+    Result := DefaultJustifyMinor;
+end;
+
+procedure TFontStyleNode.SetJustify(const Value: TX3DFontJustify);
+begin
+  FdJustify.Send([JustifyToString[Value], JustifyToString[JustifyMinor]]);
+end;
+
+procedure TFontStyleNode.SetJustifyMinor(const Value: TX3DFontJustify);
+begin
+  FdJustify.Send([JustifyToString[Justify], JustifyToString[Value]]);
 end;
 
 function TFontStyleNode.Font: TTextureFontData;
@@ -965,16 +807,53 @@ begin
 begin
   Result := TextureFont_DejaVuSans_20;
 {$endif}
+  if (CustomFont <> nil) and CustomFont.FontLoaded then // when not FontLoaded, FontData is nil
+    {$warnings off} // FontData is deprecated, it should be internal
+    Result := CustomFont.FontData
+    {$warnings on}
+  else
+  {$warnings off} // keep deprecated working
   if Assigned(OnFont) then
     OnFont(Self, Result);
+  {$warnings on}
+end;
+
+{ TTextNode ------------------------------------------------------------------ }
+
+destructor TTextNode.Destroy;
+begin
+  if X3DCache <> nil then
+    X3DCache.FreeFontTexture(FFontTextureNode);
+  inherited;
+end;
+
+procedure TTextNode.FontChanged;
+begin
+  if X3DCache <> nil then
+    X3DCache.FreeFontTexture(FFontTextureNode);
+end;
+
+function TTextNode.TexCoordField: TSFNode;
+begin
+  Result := FdTexCoord;
+end;
+
+function TTextNode.SolidField: TSFBool;
+begin
+  Result := FdSolid;
+end;
+
+function TTextNode.ProxyUsesOverTriangulate: boolean;
+begin
+  Result := false;
 end;
 
 function TTextNode.Font: TTextureFontData;
 var
   TemporaryFontStyle: TFontStyleNode;
 begin
-  if FontStyle <> nil then
-    Result := FontStyle.Font
+  if FontStyle is TFontStyleNode then // also checks FontStyle <> nil
+    Result := TFontStyleNode(FontStyle).Font
   else
   begin
     TemporaryFontStyle := TFontStyleNode.Create('', BaseUrl);
@@ -989,24 +868,18 @@ function TTextNode.FontTextureNode: TAbstractTexture2DNode;
 var
   Blending: boolean;
 begin
-  { For now, we assume that font value never changes,
-    and so FFontTextureNode is neved changed once it's initially
-    created. This is correct for normal X3D usage, since FontStyle
-    fields, like family and style, are initializeOnly.
-
-    In the future, if we want to handle FontStyle field changes,
-    then chFontStyle should provoke recreating proxy (just like
-    chGeometry does now) and it should provoke recreating FontTextureNode. }
   if FFontTextureNode = nil then
   begin
-    if FontStyle <> nil then
-      Blending := FontStyle.Blending
+    if FontStyle is TFontStyleNode then // also checks FontStyle <> nil
+      Blending := TFontStyleNode(FontStyle).Blending
     else
       Blending := TFontStyleNode.DefaultBlending;
     FFontTextureNode := X3DCache.LoadFontTexture(Font, Blending);
   end;
   Result := FFontTextureNode;
 end;
+
+{ registration --------------------------------------------------------------- }
 
 procedure RegisterTextNodes;
 begin

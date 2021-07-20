@@ -339,16 +339,33 @@ type
   TCastleTransform = class(TCastleComponent)
   private
     type
-      TEnumerator = class
-      private
+      TEnumerator = record
+      strict private
         FList: TCastleTransformList;
         FPosition: Integer;
-        function GetCurrent: TCastleTransform;
+        function GetCurrent: TCastleTransform; inline;
       public
-        constructor Create(AList: TCastleTransformList);
-        function MoveNext: Boolean;
+        constructor Create(const AList: TCastleTransformList);
+        function MoveNext: Boolean; inline;
         property Current: TCastleTransform read GetCurrent;
       end;
+
+      { Used by @link(TCastleTransform.BehaviorsEnumerate).
+        Do not use this type explicitly, it should only be used by for..in
+        construction like "for B in MyTranform.BehaviorsEnumerate do ...".
+        @exclude }
+      TCastleBehaviorEnumerator = record
+      strict private
+        FParent: TCastleTransform;
+        FPosition: Integer;
+        function GetCurrent: TCastleBehavior; inline;
+      public
+        constructor Create(const AParent: TCastleTransform);
+        function MoveNext: Boolean; inline;
+        property Current: TCastleBehavior read GetCurrent;
+        function GetEnumerator: TCastleBehaviorEnumerator;
+      end;
+
     class var
       NextTransformId: Cardinal;
     var
@@ -398,6 +415,12 @@ type
       FLastParentWorldTransformation: TTransformation;
       FLastParentWorldTransformationId: Cardinal;
 
+    procedure SerializeChildrenAdd(const C: TComponent);
+    procedure SerializeChildrenClear;
+    procedure SerializeChildrenEnumerate(const Proc: TGetChildProc);
+    procedure SerializeBehaviorsAdd(const C: TComponent);
+    procedure SerializeBehaviorsClear;
+    procedure SerializeBehaviorsEnumerate(const Proc: TGetChildProc);
     procedure SetCursor(const Value: TMouseCursor);
     procedure SetCenter(const Value: TVector3);
     procedure SetRotation(const Value: TVector4);
@@ -437,6 +460,7 @@ type
     procedure RemoveFromWorld(const Value: TCastleAbstractRootTransform);
     procedure RemoveBehaviorIndex(const BehaviorIndex: Integer);
     procedure SetListenPressRelease(const Value: Boolean);
+    function GetBehaviors(const Index: Integer): TCastleBehavior;
   protected
     { Called when the current @link(World) that contains this object changes.
       In the usual case, @link(World) corresponds to a @link(TCastleViewport.Items)
@@ -691,8 +715,6 @@ type
     { Override this to be notified about every transformation change.
       By default, this calls VisibleChangeHere, which causes the window to redraw. }
     procedure ChangedTransform; virtual;
-
-    procedure GetChildren(Proc: TGetChildProc; Root: TComponent); override;
   public
     const
       DefaultMiddleHeight = 0.5;
@@ -732,7 +754,7 @@ type
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
 
-    procedure InternalAddChild(const C: TComponent); override;
+    procedure CustomSerialization(const SerializationProcess: TSerializationProcess); override;
     function PropertySections(const PropertyName: String): TPropertySections; override;
     function GetEnumerator: TEnumerator;
 
@@ -802,39 +824,65 @@ type
     { Sort objects back-to-front @italic(right now)
       following one of the blending sorting algorithms.
       Only the immediate list items are reordered,
-      looking at their bounding boxes.
+      looking at their bounding boxes (the sorting is not recursive).
 
-      Calling this method makes sense if you have a list
-      of objects, and some of them are partially-transparent and may
+      Calling this method makes sense if you use
+      @url(https://github.com/castle-engine/castle-engine/wiki/Blending blending)
+      and multiple partially-transparent objects may
       be visible at the same place on the screen.
-      It may even make sense to call this method every frame (like in every
-      @link(TCastleWindowBase.OnUpdate)),
-      if you move or otherwise change the objects (changing their bounding boxes),
-      or if the CameraPosition may change (note that CameraPosition is only
-      relevant if BlendingSort = bs3D).
+      Sorting avoids artifacts when rendering.
 
-      Sorting partially-transparent objects avoids artifacts when rendering.
+      @unorderedList(
+        @item(
+          In general, you should call this method whenever the correct back-to-front order
+          of objects (with respect to the current camera) changes.
+        )
+        @item(
+          In 3D, it may make sense to call this method even every frame
+          (like in every @link(TCastleWindowBase.OnUpdate)).
+          Call it if you move or otherwise change the objects (changing their bounding boxes),
+          or if the CameraPosition may change (note that CameraPosition is only
+          relevant if BlendingSort = bs3D).
+        )
+        @item(
+          In 2D, it is a bit simpler.
+          You typically need to call this only when some objects' Z value changed
+          (making this object move behind / in front of some other object),
+          or when new object is added.
+          You don't need to call this method when camera changes or when object's XY position
+          changes, as they don't affect the order.
+        )
+      )
 
       Note that this doesn't take care of sorting the shapes
       within the scenes. For this, you should set
       @link(TCastleRenderOptions.BlendingSort Scene.RenderOptions.BlendingSort)
       to a value like bs3D, to keep it sorted.
-      It is actually the default now.
+      It is the default now, so you typically don't need to worry about it.
 
       See the TBlendingSort documentation for the exact specification
-      of sorting algorithms. Using BlendingSort = bsNone does nothing. }
+      of sorting algorithms. Using BlendingSort = bsNone does nothing.
+
+      @seealso SortBackToFront2D }
     procedure SortBackToFront(const BlendingSort: TBlendingSort;
       const CameraPosition: TVector3);
 
     { Sort objects back-to-front @italic(right now)
       following the 2D blending sorting algorithm.
       See @link(SortBackToFront) for documentation, this method
-      is only a shortcut for @code(SortBackToFront(bs2D, TVector3.Zero)). }
+      is only a shortcut for @code(SortBackToFront(bs2D, TVector3.Zero)).
+
+      @seealso SortBackToFront }
     procedure SortBackToFront2D;
 
-    { Bounding box of this object, taking into account current transformation
+    { Bounding box of this object, in the coordinate system of the parent transformation.
+      This method takes into account current transformation
       (like @link(Translation), @link(Rotation))
-      although not parent transformations (for this, see @link(WorldBoundingBox)).
+      but not parent TCastleTransform transformations.
+      Use @link(WorldBoundingBox) instead to know bounding box that accounts for all
+      TCastleTransform transformations.
+      Use @link(LocalBoundingBox) instead to know bounding box that does not account for
+      any parent or this TCastleTransform transformations.
 
       Takes into account both collidable and visible objects.
       For example, invisible walls (not visible) and fake walls
@@ -842,14 +890,23 @@ type
 
       It's a @italic(bounding) volume, it should be as large as necessary
       to include the object inside. At the same time, it should be
-      as "tight" as it can, to make various optimizations work best. }
+      as "tight" as it can, to make various optimizations work best.
+
+      @seealso WorldBoundingBox
+      @seealso LocalBoundingBox }
     function BoundingBox: TBox3D;
 
-    { Bounding box of this object, ignoring the transformations of this scene and parents. }
+    { Bounding box of this object, ignoring the transformations of this scene and parents.
+
+      @seealso BoundingBox
+      @seealso WorldBoundingBox }
     function LocalBoundingBox: TBox3D; virtual;
 
     { Bounding box of this object, taking into account
-      all transformations of this and parents. }
+      all transformations of this and parents.
+
+      @seealso BoundingBox
+      @seealso LocalBoundingBox }
     function WorldBoundingBox: TBox3D;
 
     { Render given object.
@@ -1798,7 +1855,10 @@ type
       In effect, the virtual methods of TCastleBehavior, like @link(TCastleBehavior.Update),
       will be automatically called.
       Also the @link(TCastleBehavior.Parent) gets assigned.
-      If the TCastleBehavior was part of another TCastleTransform, it is removed from it. }
+      If the TCastleBehavior was part of another TCastleTransform, it is removed from it.
+
+      @seealso FindBehavior
+      @seealso BehaviorsEnumerate }
     procedure AddBehavior(const Behavior: TCastleBehavior);
 
     { Remove TCastleBehavior from this TCastleTransform.
@@ -1813,6 +1873,21 @@ type
     { Find the first behavior of the given class, or create and add a new one if necessary.
       Never returns @nil. }
     function FindRequiredBehavior(const BehaviorClass: TCastleBehaviorClass): TCastleBehavior;
+
+    { Count of behaviors.
+      @seealso AddBehavior
+      @seealso RemoveBehavior }
+    function BehaviorsCount: Integer;
+
+    { Enumerate current behaviors.
+      @seealso AddBehavior
+      @seealso RemoveBehavior }
+    property Behaviors [const Index: Integer]: TCastleBehavior read GetBehaviors;
+
+    { You can enumerate current behaviors using loop like
+      @code(for B in MyTransform.BehaviorsEnumerate do ...).
+      Do not call this method in other contexts, it is only useful for "for..in" construction. }
+    function BehaviorsEnumerate: TCastleBehaviorEnumerator;
   published
     { Is this object visible and colliding.
 
@@ -2485,9 +2560,9 @@ begin
   Result := FList[FPosition];
 end;
 
-constructor TCastleTransform.TEnumerator.Create(AList: TCastleTransformList);
+constructor TCastleTransform.TEnumerator.Create(const AList: TCastleTransformList);
 begin
-  inherited Create;
+//  inherited Create;
   FList := AList;
   FPosition := -1;
 end;
@@ -3679,20 +3754,63 @@ begin
   VisibleChangeHere([vcVisibleGeometry]);
 end;
 
-procedure TCastleTransform.GetChildren(Proc: TGetChildProc; Root: TComponent);
+procedure TCastleTransform.CustomSerialization(const SerializationProcess: TSerializationProcess);
+begin
+  inherited;
+  SerializationProcess.ReadWrite('Children',
+    @SerializeChildrenEnumerate,
+    @SerializeChildrenAdd,
+    @SerializeChildrenClear);
+  SerializationProcess.ReadWrite('Behaviors',
+    @SerializeBehaviorsEnumerate,
+    @SerializeBehaviorsAdd,
+    @SerializeBehaviorsClear);
+end;
+
+procedure TCastleTransform.SerializeChildrenEnumerate(const Proc: TGetChildProc);
 var
   I: Integer;
 begin
-  inherited;
   for I := 0 to List.Count - 1 do
-    if [csSubComponent, csTransient] * List[I].ComponentStyle = [] then
+    if List[I].ComponentStyle * [csSubComponent, csTransient] = [] then
       Proc(List[I]);
 end;
 
-procedure TCastleTransform.InternalAddChild(const C: TComponent);
+procedure TCastleTransform.SerializeChildrenAdd(const C: TComponent);
 begin
-  // matches TCastleTransform.GetChildren implementation
-  Add(C as TCastleTransform)
+  Add(C as TCastleTransform);
+end;
+
+procedure TCastleTransform.SerializeChildrenClear;
+var
+  I: Integer;
+begin
+  for I := List.Count - 1 downto 0 do // downto, as list may shrink during loop
+    if List[I].ComponentStyle * [csSubComponent, csTransient] = [] then
+      List[I].Free; // will remove itself from children list
+end;
+
+procedure TCastleTransform.SerializeBehaviorsEnumerate(const Proc: TGetChildProc);
+var
+  I: Integer;
+begin
+  for I := 0 to BehaviorsCount - 1 do
+    if Behaviors[I].ComponentStyle * [csSubComponent, csTransient] = [] then
+      Proc(Behaviors[I]);
+end;
+
+procedure TCastleTransform.SerializeBehaviorsAdd(const C: TComponent);
+begin
+  AddBehavior(C as TCastleBehavior);
+end;
+
+procedure TCastleTransform.SerializeBehaviorsClear;
+var
+  I: Integer;
+begin
+  for I := BehaviorsCount - 1 downto 0 do // downto, as list may shrink during loop
+    if Behaviors[I].ComponentStyle * [csSubComponent, csTransient] = [] then
+      Behaviors[I].Free; // will remove itself from Behaviors list
 end;
 
 function TCastleTransform.PropertySections(const PropertyName: String): TPropertySections;
@@ -3875,6 +3993,11 @@ begin
   Result := TEnumerator.Create(FList);
 end;
 
+function TCastleTransform.BehaviorsEnumerate: TCastleBehaviorEnumerator;
+begin
+  Result := TCastleBehaviorEnumerator.Create(Self);
+end;
+
 procedure TCastleTransform.SetListenPressRelease(const Value: Boolean);
 begin
   if FListenPressRelease <> Value then
@@ -3888,6 +4011,16 @@ begin
         FWorld.UnregisterPressRelease(Self);
     end;
   end;
+end;
+
+function TCastleTransform.BehaviorsCount: Integer;
+begin
+  Result := FBehaviors.Count;
+end;
+
+function TCastleTransform.GetBehaviors(const Index: Integer): TCastleBehavior;
+begin
+  Result := TCastleBehavior(FBehaviors[Index]);
 end;
 
 procedure TCastleTransform.AddBehavior(const Behavior: TCastleBehavior);

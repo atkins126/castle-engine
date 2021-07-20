@@ -28,6 +28,8 @@ type
     procedure TestMaxTextWidthHtmlInWindow;
     procedure TestSizeFontFamily;
     procedure TestOverrideFont;
+    procedure TestSizeChangeNotificationFontFamily;
+    procedure TestSizeChangeNotificationCustomized;
   end;
 
 implementation
@@ -40,8 +42,8 @@ implementation
 
 uses SysUtils, Classes,
   {$ifdef TEST_CASTLE_WINDOW} CastleWindow, {$endif}
-  CastleFonts, CastleTextureFont_DejaVuSansMonoBold_15, CastleFontFamily,
-  Font_LatoRegular_300;
+  CastleFonts, CastleTextureFont_DejaVuSansMonoBold_15, CastleLog,
+  Font_LatoRegular_300, CastleInternalFreeTypeH;
 
 procedure TTestCastleFonts.TestMaxTextWidthHtml;
 var
@@ -49,21 +51,23 @@ var
   SList: TStringList;
   W1, W2: Single;
 begin
-  F := TTextureFont.Create(TextureFont_DejaVuSansMonoBold_15);
+  F := TCastleFont.Create(nil);
+  try
+    F.Load(TextureFont_DejaVuSansMonoBold_15);
 
-  SList := TStringList.Create;
+    SList := TStringList.Create;
+    try
+      SList.Append('blah');
+      W1 := F.MaxTextWidth(SList);
 
-  SList.Append('blah');
-  W1 := F.MaxTextWidth(SList);
+      SList.Clear;
+      SList.Append('<font color="#aabbcc">blah</font>');
+      W2 := F.MaxTextWidth(SList, true);
 
-  SList.Clear;
-  SList.Append('<font color="#aabbcc">blah</font>');
-  W2 := F.MaxTextWidth(SList, true);
-
-  AssertTrue(W1 > 0);
-  AssertTrue(W1 = W2);
-  FreeAndNil(SList);
-  FreeAndNil(F);
+      AssertTrue(W1 > 0);
+      AssertTrue(W1 = W2);
+    finally FreeAndNil(SList) end;
+  finally FreeAndNil(F) end;
 end;
 
 procedure TTestCastleFonts.TestMaxTextWidthHtmlInWindow;
@@ -86,19 +90,21 @@ end;
 
 procedure TTestCastleFonts.TestSizeFontFamily;
 var
-  Font: TTextureFont;
-  Family: TFontFamily;
+  Font: TCastleFont;
+  Family: TCastleFontFamily;
   Customized: TCustomizedFont;
 begin
-  Font := TTextureFont.Create(TextureFont_DejaVuSansMonoBold_15);
+  Font := TCastleFont.Create(nil);
   try
+    Font.Load(TextureFont_DejaVuSansMonoBold_15);
+
     AssertEquals(15, Font.Size);
     AssertEquals(15, Font.EffectiveSize);
     AssertEquals(14, Font.RowHeight);
 
-    Family := TFontFamily.Create(nil);
+    Family := TCastleFontFamily.Create(nil);
     try
-      Family.RegularFont := Font;
+      Family.Regular := Font;
 
       AssertEquals(0, Family.Size);
       AssertEquals(15, Family.EffectiveSize);
@@ -129,9 +135,9 @@ begin
     AssertEquals(60, Font.EffectiveSize);
     AssertEquals(56, Font.RowHeight);
 
-    Family := TFontFamily.Create(nil);
+    Family := TCastleFontFamily.Create(nil);
     try
-      Family.RegularFont := Font;
+      Family.Regular := Font;
 
       AssertEquals(0, Family.Size);
       AssertEquals(60, Family.EffectiveSize);
@@ -160,7 +166,7 @@ begin
 end;
 
 type
-  TLargeDigitsFont = class(TTextureFont)
+  TLargeDigitsFont = class(TCastleFont)
     { The "Font_LatoRegular_300" font has only digits, misses other chars.
       So default calculation of RowHeight and friends doesn't work. }
     procedure Measure(out ARowHeight, ARowHeightBase, ADescend: Single); override;
@@ -185,9 +191,9 @@ procedure TTestCastleFonts.TestOverrideFont;
 var
   LargeDigitsFont: TLargeDigitsFont;
   CustomizedFont: TCustomizedFont;
-  FontFamily: TFontFamily;
+  FontFamily: TCastleFontFamily;
 begin
-  LargeDigitsFont := TLargeDigitsFont.Create(TComponent(nil));
+  LargeDigitsFont := TLargeDigitsFont.Create(nil);
   try
     LargeDigitsFont.Load(TextureFont_LatoRegular_300);
     LargeDigitsFont.FontData.UseFallbackGlyph := false;
@@ -215,9 +221,9 @@ begin
       AssertSameValue(0, CustomizedFont.Descend);
     finally FreeAndNil(CustomizedFont) end;
 
-    FontFamily := TFontFamily.Create(nil);
+    FontFamily := TCastleFontFamily.Create(nil);
     try
-      FontFamily.RegularFont := LargeDigitsFont;
+      FontFamily.Regular := LargeDigitsFont;
       AssertSameValue(0, FontFamily.Size); // not customized yet
       AssertSameValue(522, FontFamily.TextWidth('123'), 1);
       AssertSameValue(221, FontFamily.TextHeight('123'), 1);
@@ -252,9 +258,9 @@ begin
       AssertSameValue(0, CustomizedFont.Descend);
     finally FreeAndNil(CustomizedFont) end;
 
-    FontFamily := TFontFamily.Create(nil);
+    FontFamily := TCastleFontFamily.Create(nil);
     try
-      FontFamily.RegularFont := LargeDigitsFont;
+      FontFamily.Regular := LargeDigitsFont;
       FontFamily.Size := 2000;
       AssertSameValue(2000, FontFamily.Size); // not customized yet
       AssertSameValue(522 * 20/3, FontFamily.TextWidth('123'), 20/3);
@@ -266,6 +272,64 @@ begin
       AssertSameValue(0, FontFamily.Descend);
     finally FreeAndNil(FontFamily) end;
   finally FreeAndNil(LargeDigitsFont) end;
+end;
+
+procedure TTestCastleFonts.TestSizeChangeNotificationFontFamily;
+var
+  F: TCastleFont;
+  FF: TCastleFontFamily;
+begin
+  // if not FreeTypeLibraryInitialized then
+  // begin
+  //   WritelnWarning('FreeType library not available, aborting TTestCastleFonts.TestSizeChangeNotificationFontFamily');
+  //   Exit;
+  // end;
+
+  F := TCastleFont.Create(nil);
+  AssertEquals(0, F.RowHeight);
+
+  FF := TCastleFontFamily.Create(nil);
+  AssertEquals(0, FF.RowHeight);
+  FF.Regular := F;
+  AssertEquals(0, FF.RowHeight);
+
+  F.Url := 'castle-data:/fonts/PARPG.ttf';
+  AssertSameValue(21, F.RowHeight);
+  AssertSameValue(21, FF.RowHeight);
+  // writeln(F.RowHeight:1:2);
+  // writeln(FF.RowHeight:1:2);
+
+  FreeAndNil(F);
+  FreeAndNil(FF);
+end;
+
+procedure TTestCastleFonts.TestSizeChangeNotificationCustomized;
+var
+  F: TCastleFont;
+  CF: TCastleFontFamily;
+begin
+  // if not FreeTypeLibraryInitialized then
+  // begin
+  //   WritelnWarning('FreeType library not available, aborting TTestCastleFonts.TestSizeChangeNotificationCustomized');
+  //   Exit;
+  // end;
+
+  F := TCastleFont.Create(nil);
+  AssertEquals(0, F.RowHeight);
+
+  CF := TCastleFontFamily.Create(nil);
+  AssertEquals(0, CF.RowHeight);
+  CF.Regular := F;
+  AssertEquals(0, CF.RowHeight);
+
+  F.Url := 'castle-data:/fonts/PARPG.ttf';
+  AssertSameValue(21, F.RowHeight);
+  AssertSameValue(21, CF.RowHeight);
+  // writeln(F.RowHeight:1:2);
+  // writeln(CF.RowHeight:1:2);
+
+  FreeAndNil(F);
+  FreeAndNil(CF);
 end;
 
 initialization

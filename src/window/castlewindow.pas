@@ -203,7 +203,7 @@ unit CastleWindow;
          {$elseif defined(UNIX)}
            {$if defined(ANDROID)}
              {$define CASTLE_WINDOW_ANDROID}
-           {$elseif defined(IOS) or defined(CASTLE_NINTENDO_SWITCH)}
+           {$elseif defined(CASTLE_IOS) or defined(CASTLE_NINTENDO_SWITCH)}
              {$define CASTLE_WINDOW_LIBRARY}
            {$elseif defined(DARWIN)}
              // various possible backends on macOS (desktop):
@@ -305,7 +305,7 @@ uses {$define read_interface_uses}
   CastleVectors, CastleRectangles, CastleColors,
   CastleUtils, CastleClassUtils, CastleGLUtils, CastleImages, CastleGLImages,
   CastleKeysMouse, CastleStringUtils, CastleFilesUtils, CastleTimeUtils,
-  CastleFileFilters, CastleUIControls, CastleGLContainer,
+  CastleFileFilters, CastleUIControls,
   CastleInternalPk3DConnexion, CastleParameters, CastleSoundEngine,
   CastleApplicationProperties
   {$ifdef CASTLE_DEPRECATED_WINDOW_CLASSES},
@@ -883,7 +883,7 @@ type
     { Just like FileDialog, but these always get and should set FileName,
       not an URL. Also, for OpenDialog, we make sure that initial FileName
       contains only a path (not the final file name), since this is
-      good behaviour for users (even if some API allow to set proposed
+      good behavior for users (even if some API allow to set proposed
       file name). }
     function BackendFileDialog(const Title: string; var FileName: string;
       OpenDialog: boolean; FileFilters: TFileFilterList = nil): boolean; overload;
@@ -1637,6 +1637,7 @@ type
 
       Under Lazarus, you can of course also use LCL timers. }
     property OnTimer: TContainerEvent read FOnTimer write FOnTimer;
+      deprecated 'use TCastleTimer to perform periodic operations, or track time delay in OnUpdate';
 
     { Called when user drag and drops file(s) on the window.
       In case of macOS bundle, this is also called when user opens a document
@@ -2032,23 +2033,7 @@ type
       const AllowedOptions: TWindowParseOptions;
       AddHeader: boolean): string;
 
-    { dialog boxes using GUI ------------------------------------------------ }
-
-    { About all dialogs:
-      - Behaviour of callbacks:
-        callbacks of Application and callbacks of other TCastleWindowBase MAY be called while
-        the dialog is open. Callbacks of THIS object (OnXxx) will not be
-        called. You should treat XxxDialog like
-          Mode := TGLModeFrozenScreen.Create(Self);
-          try
-            ....
-          finally FreeAndNil(Mode) end;
-      - How does these dialogs look like?
-        Under GTK and WinAPI backends we use native dialogs of these.
-        Under Xlib backend we simply fallback on CastleMessages.Message*.
-    }
-
-    { Select a file to open or save.
+    { Select a file to open or save, using native (looks familiar on a given system) dialog box.
       Accepts and returns argument as an URL.
       Passing a filename as an URL is also allowed (as everywhere),
       it may be changed into an URL on return.
@@ -2122,6 +2107,32 @@ type
         TFileFilterList.AddFiltersFromString
         for explanation how to encode filters in a string.)
 
+      As with all the model dialog methods here, like FileDialog,
+      ColorDialog, MessageOK, MessageYesNo:
+
+      @unorderedList(
+        @item(
+          The events of this TCastleWindowBase will not happen
+          while we are inside a modal dialog box.
+
+          We have a special code that disables all TCastleWindowBase
+          callbacks (like TCastleWindowBase.OnUpdate) and temporarily
+          disables all UI controls on the @link(Controls) list
+          (so your TCastleUserInterface, TCastleTransform, TUIState etc.
+          instances will @italic(not) have their methods,
+          like @code(Update), called).
+        )
+
+        @item(
+          The events of @link(Application) and (in case you have multiple
+          windows open) the events of other TCastleWindowBase @italic(may)
+          (but do not have to) happen, while the dialog box is open.
+
+          So be prepared there to handle the situation that this window may be "stuck"
+          in a modal dialog box.
+        )
+      )
+
       @groupBegin }
     function FileDialog(const Title: string; var URL: string;
       OpenDialog: boolean; FileFilters: TFileFilterList = nil): boolean; overload;
@@ -2129,10 +2140,16 @@ type
       OpenDialog: boolean; const FileFilters: string): boolean; overload;
     { @groupEnd }
 
-    { Shows a dialog window allowing user to choose an RGB color.
-      Initial value of Color specifies initial RGB values proposed to the user.
-      If user accepts, returns true and sets Color accordingly, else
-      returns false (and does not modify Color).
+    { Choose a color, using native (looks familiar on a given system) dialog box.
+
+      Initial value of Color specifies initial color proposed to the user.
+      If user accepts, we return true and set Color accordingly, else
+      we return false (and do not modify Color).
+
+      Some overloaded versions (the one with TCastleColor) specify a color with alpha,
+      but note that @italic(currently no implemetation allows
+      the user to adjust the color's alpha value).
+      Alpha always remains unchanged.
 
       @groupBegin }
     function ColorDialog(var Color: TCastleColor): boolean;
@@ -2140,10 +2157,11 @@ type
     function ColorDialog(var Color: TVector3Byte): boolean;
     { @groupEnd }
 
-    { Simple "OK" dialog box. }
+    { Show some information and just ask to press "OK",
+      using native (looks familiar on a given system) dialog box. }
     procedure MessageOK(const S: string; const MessageType: TWindowMessageType);
 
-    { Simple yes/no question dialog box. }
+    { Ask a yes/no question, using native (looks familiar on a given system) dialog box. }
     function MessageYesNo(const S: string;
       const MessageType: TWindowMessageType = mtQuestion): boolean;
 
@@ -2549,7 +2567,9 @@ type
       when some windows are already open.
       @groupBegin }
     property OnTimer: TProcedure read FOnTimer write FOnTimer;
+      deprecated 'use TCastleTimer to perform periodic operations, or track time delay in OnUpdate';
     property TimerMilisec: Cardinal read FTimerMilisec write FTimerMilisec default 1000;
+      deprecated 'use TCastleTimer to perform periodic operations, or track time delay in OnUpdate';
     { @groupEnd }
 
     { Main window used for various purposes.
@@ -3550,8 +3570,10 @@ end;
 procedure TCastleWindowBase.DoTimer;
 begin
   MakeCurrent;
+  {$warnings off} // keep deprecated working
   if Assigned(OnTimer) then
     OnTimer(Container);
+  {$warnings on}
 end;
 
 procedure TCastleWindowBase.DoMenuClick(Item: TMenuItem);
@@ -3592,8 +3614,10 @@ end;
 
 function TCastleWindowBase.AllowSuspendForInput: boolean;
 begin
+  {$warnings off} // keep deprecated working - OnTimer
   Result := Container.AllowSuspendForInput and
     not (Invalidated or Assigned(OnUpdate) or Assigned(OnTimer) or FpsShowOnCaption);
+  {$warnings on}
 end;
 
 { Menu things ------------------------------------------------------------ }
@@ -4925,10 +4949,12 @@ function TCastleApplication.AllowSuspendForInput: boolean;
 var
   I: Integer;
 begin
+  {$warnings off} // keep deprecated working - OnTimer
   Result := not (
     Assigned(OnUpdate) or
     Assigned(OnTimer) or
     (ApplicationProperties.OnUpdate.Count <> 0));
+  {$warnings on}
   if not Result then Exit;
 
   for I := 0 to OpenWindowsCount - 1 do

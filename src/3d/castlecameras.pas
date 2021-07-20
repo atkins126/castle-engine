@@ -150,10 +150,12 @@ type
     FOrigin: TVector2;
     FWidth, FHeight, FScale: Single;
     FEffectiveWidth, FEffectiveHeight: Single;
+    FStretch, WarningEffectiveSizeZeroDone: Boolean;
     procedure SetOrigin(const Value: TVector2);
     procedure SetWidth(const Value: Single);
     procedure SetHeight(const Value: Single);
     procedure SetScale(const Value: Single);
+    procedure SetStretch(const Value: Boolean);
   private
     Camera: TCastleCamera;
   public
@@ -222,17 +224,27 @@ type
           of the viewport control.
         )
 
-        @item(When both @link(Width) and @link(Height) are non-zero,
-          then they explicitly determine the @italic(minimum)
-          projection width and height along the given axis.
-
-          This, again, allows to easily display the same piece of the game world,
+        @item(When both @link(Width) and @link(Height) are non-zero, then
+          they determine the projection width and height.
+          This also allows to easily display the same piece of the game world,
           regardless of the viewport size.
 
-          If the displayed viewport aspect ratio wil be different than given
-          @link(Width) and @link(Height) ratio, then these value will be
-          treated as minimum values, and they will be adjusted.
-          This follows the X3D OrthoViewpoint.fieldOfView specification.
+          @unorderedList(
+            @item(When @link(Stretch) = @false (default), they determine the @italic(minimum)
+              projection width and height along the given axis.
+
+              If the displayed viewport aspect ratio wil be different than given
+              @link(Width) and @link(Height) ratio, then these value will be
+              treated as minimum values, and they will be adjusted.
+              This follows the X3D OrthoViewpoint.fieldOfView specification.)
+
+            @item(When @link(Stretch) = @true, these values are used directly,
+              even if it means that aspect ratio of the projection
+              will not reflect the aspect ratio of the viewport on screen.
+
+              This allows for some tricks, like @italic(Military Projection),
+              https://github.com/castle-engine/castle-engine/issues/290 .)
+          )
         )
       )
 
@@ -256,6 +268,12 @@ type
       When @link(Origin) is (0.5,0.5), this behaves like scaling around
       the middle of the viewport. }
     property Scale: Single read FScale write SetScale default 1;
+
+    { Allow non-proportional stretch of projection.
+      In effect the @link(Width) and @link(Height)
+      (if both non-zero) are applied directly, without correcting them to follow
+      aspect ratio of the viewport. }
+    property Stretch: Boolean read FStretch write SetStretch default false;
 
   {$define read_interface_class}
   {$I auto_generated_persistent_vectors/tcastleorthographic_persistent_vectors.inc}
@@ -722,6 +740,7 @@ type
     constructor Create(AOwner: TComponent); override;
     procedure Assign(Source: TPersistent); override;
     function GetExists: boolean; override;
+    function PropertySections(const PropertyName: String): TPropertySections; override;
 
     { Used by @link(MoveAllowed), see there for description.
       You can assign this property. }
@@ -800,7 +819,7 @@ type
       @unorderedList(
         @item(Collision detection routines use this.)
         @item(It determines the projection near plane (that must be slightly
-          smaller than this radius) for 3D rendering.)
+          smaller than this radius), see also @link(TCastleCamera.ProjectionNear).)
         @item(
           Walk navigation uses this for automatically correcting
           PreferredHeight, otherwise weird things could happen
@@ -2063,6 +2082,7 @@ type
     property MoveHorizontalSpeed;
     property MoveVerticalSpeed;
     property MoveSpeed;
+    property Radius;
   end;
 
   TUniversalCamera = TCastleNavigation deprecated 'complicated TUniversalCamera class is removed; use TCastleNavigation as base class, or TCastleWalkNavigation or TCastleExamineNavigation for particular type, and Viewport.NavigationType to switch type';
@@ -2315,13 +2335,33 @@ procedure TCastleOrthographic.SetScale(const Value: Single);
 begin
   if FScale <> Value then
   begin
+    if Value <= 0 then
+      WritelnWarning('Orthographic projection scale (Camera.Orthographic.Scale) should be > 0, but is being set to %f', [
+        Value
+      ]);
     FScale := Value;
+    Camera.VisibleChange;
+  end;
+end;
+
+procedure TCastleOrthographic.SetStretch(const Value: Boolean);
+begin
+  if FStretch <> Value then
+  begin
+    FStretch := Value;
     Camera.VisibleChange;
   end;
 end;
 
 procedure TCastleOrthographic.InternalSetEffectiveSize(const W, H: Single);
 begin
+  if ((W <= 0) or (H <= 0)) and (not WarningEffectiveSizeZeroDone) then
+  begin
+    WritelnWarning('Orthographic projection effective width and height (calculated based on Camera.Orthographic.Width,Height,Scale and viewport size) should be > 0, but are %f x %f (further warnings about it will be supressed, to not spam log)', [
+      W, H
+    ]);
+    WarningEffectiveSizeZeroDone := true;
+  end;
   FEffectiveWidth := W;
   FEffectiveHeight := H;
 end;
@@ -3064,6 +3104,18 @@ begin
     Result := (InternalViewport as TCastleViewport).Items.BoundingBox
   else
     Result := FModelBox;
+end;
+
+function TCastleNavigation.PropertySections(
+  const PropertyName: String): TPropertySections;
+begin
+// not sure if useful enough:
+  // case PropertyName of
+  //   'Input':
+  //     Result := [psBasic];
+  //   else
+      Result := inherited PropertySections(PropertyName);
+  // end;
 end;
 
 { TCastleExamineNavigation ------------------------------------------------------------ }
@@ -3859,12 +3911,12 @@ end;
 function TCastleExamineNavigation.PropertySections(
   const PropertyName: String): TPropertySections;
 begin
-  if (PropertyName = 'MoveEnabled') or
-     (PropertyName = 'RotationEnabled') or
-     (PropertyName = 'ZoomEnabled') then
-    Result := [psBasic]
-  else
-    Result := inherited PropertySections(PropertyName);
+  case PropertyName of
+    'MoveEnabled', 'RotationEnabled', 'ZoomEnabled', 'RotationAccelerate', 'ExactMovement':
+      Result := [psBasic];
+    else
+      Result := inherited PropertySections(PropertyName);
+  end;
 end;
 
 { TCastleMouseLookNavigation ------------------------------------------------- }
@@ -5359,11 +5411,16 @@ end;
 function TCastleWalkNavigation.PropertySections(
   const PropertyName: String): TPropertySections;
 begin
-  if (PropertyName = 'Gravity') or
-     (PropertyName = 'MoveSpeed') then
-    Result := [psBasic]
-  else
-    Result := inherited PropertySections(PropertyName);
+  case PropertyName of
+    'Gravity', 'MoveSpeed', 'Radius', 'PreferredHeight', 'MoveHorizontalSpeed', 'MoveVerticalSpeed',
+    'MouseDraggingHorizontalRotationSpeed', 'MouseDraggingVerticalRotationSpeed',
+    'MouseDraggingMoveSpeed', 'MouseDragMode', 'RotationHorizontalSpeed', 'RotationVerticalSpeed',
+    // 'MouseLook', // hard to get out of it, as it captures mouse
+    'MouseLookHorizontalSensitivity', 'MouseLookVerticalSensitivity', 'InvertVerticalMouseLook':
+      Result := [psBasic];
+    else
+      Result := inherited PropertySections(PropertyName);
+  end;
 end;
 
 { global ------------------------------------------------------------ }

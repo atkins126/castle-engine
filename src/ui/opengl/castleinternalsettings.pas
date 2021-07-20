@@ -80,7 +80,7 @@ implementation
 
 uses Math, TypInfo,
   CastleLog, CastleXMLUtils, CastleStringUtils, CastleGLImages,
-  CastleFontFamily, CastleUnicode, CastleUriUtils, CastleLocalizationGetText;
+  CastleUnicode, CastleUriUtils, CastleLocalizationGetText;
 
 { TWarmupCacheFormatList ----------------------------------------------------- }
 
@@ -225,10 +225,10 @@ type
     finally Profiler.Stop(TimeStart) end;
   end;
 
-  function LoadFontSettings(const FontElement: TDOMElement): TCastleFont;
+  function LoadFontSettings(const FontElement: TDOMElement): TCastleAbstractFont;
   var
     NewFontUrl: String;
-    NewFontSize, NewFontLoadSize: Cardinal;
+    NewFontSize, NewFontOptimalSize: Cardinal;
     NewFontAntiAliased: Boolean;
     AllSizesAtLoadStr: String;
     AllSizesAtLoad: TDynIntegerArray;
@@ -279,9 +279,13 @@ type
         TCustomizedFont(Result).Load(NewFontUrl, AllSizesAtLoad, NewFontAntiAliased, UnicodeCharList);
       end else
       begin
-        NewFontLoadSize := FontElement.AttributeCardinalDef('size_at_load', NewFontSize);
-        Result := TTextureFont.Create(Container);
-        TTextureFont(Result).Load(NewFontUrl, NewFontLoadSize, NewFontAntiAliased, UnicodeCharList);
+        NewFontOptimalSize := FontElement.AttributeCardinalDef('size_at_load', NewFontSize);
+        Result := TCastleFont.Create(Container);
+        TCastleFont(Result).OptimalSize := NewFontOptimalSize;
+        TCastleFont(Result).AntiAliased := NewFontAntiAliased;
+        TCastleFont(Result).LoadBasicCharacters := false; // if neded, they are included in UnicodeCharList
+        TCastleFont(Result).LoadCharacters := UnicodeCharList.ToString;
+        TCastleFont(Result).URL := NewFontUrl;
       end;
       Result.Size := NewFontSize;
       FreeAndNil(UnicodeCharList);
@@ -297,8 +301,8 @@ var
   SettingsDoc: TXMLDocument;
   E: TDOMElement;
 
-  NewDefaultFont: TCastleFont;
-  NewFontFamily: TFontFamily;
+  NewDefaultFont: TCastleAbstractFont;
+  NewFontFamily: TCastleFontFamily;
 
   NewUIScaling: TUIScaling;
   NewUIReferenceWidth, NewUIReferenceHeight: Single;
@@ -332,13 +336,13 @@ begin
         NewDefaultFont := LoadFontSettings(E)
       else
       begin
-        NewFontFamily := TFontFamily.Create(Container);
+        NewFontFamily := TCastleFontFamily.Create(Container);
         NewFontFamily.Name := 'CastleInternalDefaultFontFamily';
-        NewFontFamily.RegularFont := LoadFontSettings(E.Child('regular', false));
-        NewFontFamily.BoldFont := LoadFontSettings(E.Child('bold', false));
-        NewFontFamily.ItalicFont := LoadFontSettings(E.Child('italic', false));
-        NewFontFamily.BoldItalicFont := LoadFontSettings(E.Child('bold_italic', false));
-        if NewFontFamily.RegularFont = nil then
+        NewFontFamily.Regular := LoadFontSettings(E.Child('regular', false));
+        NewFontFamily.Bold := LoadFontSettings(E.Child('bold', false));
+        NewFontFamily.Italic := LoadFontSettings(E.Child('italic', false));
+        NewFontFamily.BoldItalic := LoadFontSettings(E.Child('bold_italic', false));
+        if NewFontFamily.Regular = nil then
           raise EInvalidSettingsXml.Create('The <default_font> specified in CastleSettings.xml does not have a <regular> variant');
         NewDefaultFont := NewFontFamily;
       end;

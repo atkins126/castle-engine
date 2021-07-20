@@ -92,7 +92,7 @@ uses Classes, Math,
   CastleGLUtils, CastleUtils,
   CastleStringUtils, CastleVectors, CastleKeysMouse, CastleControls,
   CastleRectangles, CastleUIState, CastleColors, CastleUIControls,
-  CastleFonts, CastleFontFamily, CastleTimeUtils;
+  CastleFonts, CastleInternalRichText, CastleTimeUtils;
 
 type
   { Abstract class for a modal dialog user-interface state.
@@ -166,7 +166,7 @@ type
       read FAlignment write FAlignment default DefaultAlignment;
 
     { Enable a subset of HTML to mark font changes inside the text.
-      See the TCastleFont.PrintStrings for a description of supported
+      See the TCastleAbstractFont.PrintStrings for a description of supported
       HTML constructs. }
     property Html: boolean read FHtml write FHtml default false;
 

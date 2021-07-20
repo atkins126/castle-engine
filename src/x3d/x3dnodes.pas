@@ -162,13 +162,13 @@ unit X3DNodes;
 interface
 
 uses SysUtils, Generics.Collections, Classes, XMLRead, DOM,
-  CastleVectors, CastleRectangles, CastleTimeUtils,
+  CastleVectors, CastleRectangles, CastleTimeUtils, CastleFonts,
   CastleInternalX3DLexer, CastleUtils, CastleClassUtils,
   X3DFields, CastleBoxes, CastleImages, CastleColors, CastleCameras,
   CastleVideos, X3DTime, CastleTransform, CastleMaterialProperties,
   CastleScript, X3DCastleScript, CastleInternalOctree, CastleCompositeImage,
   CastleTextureImages, CastleKeysMouse, CastleSoundEngine, CastleStringUtils,
-  CastleTextureFontData, CastleRenderOptions, CastleProjection;
+  CastleTextureFontData, CastleRenderOptions, CastleProjection, CastleBehaviors;
 
 {$define read_interface}
 
@@ -232,7 +232,6 @@ type
   {$I x3dnodes_97_nurbs.inc}
   {$I x3dnodes_castle.inc}
   {$I x3dnodes_instantreality.inc}
-  {$I x3dnodes_bitmanagement.inc}
 
   {$I x3dnodes_x3dunknownnode.inc}
   {$I x3dnodes_x3dinterfacedeclaration.inc}
@@ -279,8 +278,7 @@ uses
   CastleFilesUtils, StrUtils, CastleURIUtils, CastleUnicode, CastleCurves,
   CastleLog, CastleScriptParser, CastleDataURI, URIParser, CastleDownload,
   CastleNURBS, CastleQuaternions, CastleXMLUtils, CastleOpenDocument,
-  CastleSoundBase, CastleTriangles,
-  X3DLoadInternalUtils;
+  CastleSoundBase, CastleTriangles, X3DLoadInternalUtils;
 
 {$warnings on}
 
@@ -371,7 +369,6 @@ uses
 {$I x3dnodes_97_nurbs.inc}
 {$I x3dnodes_castle.inc}
 {$I x3dnodes_instantreality.inc}
-{$I x3dnodes_bitmanagement.inc}
 
 { Auto-generated nodes code }
 {$I auto_generated_node_helpers/x3dnodes_anchor.inc}
@@ -716,7 +713,6 @@ initialization
   RegisterVRML97NodesNurbs;
   RegisterKambiNodes;
   RegisterInstantRealityNodes;
-  RegisterBitManagementNodes;
 
   { X3D components registration : }
 
