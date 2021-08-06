@@ -39,7 +39,8 @@ begin
       {$ifdef HAS_SEPARATE_IOS}
       (Defaults.OS = iOS)
       {$else}
-      ((Defaults.OS = Darwin) and (Defaults.CPU in [Arm, AArch64]))
+      // FPC 3.0.2 and 3.0.4 do not define AArch64
+      ((Defaults.OS = Darwin) and (Defaults.CPU in [Arm {$ifndef VER3_0} , AArch64 {$endif}]))
       {$endif};
     Xlib := Defaults.OS in (AllUnixOSes - [Android]);
 
@@ -215,6 +216,7 @@ begin
     P.Targets.AddUnit('castleinapppurchases.pas');
     P.Targets.AddUnit('castlephotoservice.pas');
     P.Targets.AddUnit('castleopendocument.pas');
+    P.Targets.AddUnit('castletenjin.pas');
 
     P.SourcePath.Add('src' + PathDelim + 'services' + PathDelim + 'opengl');
     P.Targets.AddUnit('castlegiftiz.pas');
