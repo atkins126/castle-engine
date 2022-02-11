@@ -1,5 +1,5 @@
 {
-  Copyright 2020-2020 Michalis Kamburelis.
+  Copyright 2020-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -44,7 +44,8 @@ type
         InsideInternalCameraChanged: Boolean;
 
         { Point on axis closest to given pick.
-          Axis may be -1 to indicate we drag on all axes with the same amount. }
+          Axis may be -1 to indicate we drag on all axes with the same amount
+          or -2 to indicate we drag X and Y axes for 2D. }
         function PointOnAxis(out Intersection: TVector3;
           const Pick: TRayCollisionNode; const Axis: Integer): Boolean;
 
@@ -145,6 +146,7 @@ end;
 
 var
   IntersectionScalar: Single;
+  IntersectionOneAxis: TVector3;
 begin
   if Axis = -1 then
   begin
@@ -162,6 +164,26 @@ begin
     IntersectionScalar := Sqrt(PointToLineDistanceSqr(TVector3.Zero, Pick.RayOrigin, Pick.RayDirection));
     Intersection := Vector3(IntersectionScalar, IntersectionScalar, IntersectionScalar);
   end else
+  if Axis = -2 then
+  begin
+    Intersection := Vector3(0, 0, 0);
+    Result := false;
+    if PointOnLineClosestToLine(IntersectionOneAxis,
+       TVector3.Zero, TVector3.One[0],
+       Pick.RayOrigin, Pick.RayDirection) then
+    begin
+      Intersection := IntersectionOneAxis;
+      Result := true;
+    end;
+
+    if PointOnLineClosestToLine(IntersectionOneAxis,
+       TVector3.Zero, TVector3.One[1],
+       Pick.RayOrigin, Pick.RayDirection) then
+    begin
+      Intersection := Intersection + IntersectionOneAxis;
+      Result := true;
+    end;
+  end else
   begin
     Result := PointOnLineClosestToLine(Intersection,
       TVector3.Zero, TVector3.One[Axis],
@@ -171,7 +193,7 @@ begin
     VisualizePick.Exists := Result;
     if Result then
     begin
-      // Intersection is in UniqueParent coordinate space, i.e. ignores our gizmo scale
+      // Intersection is in Parent coordinate space, i.e. ignores our gizmo scale
       VisualizePick.Translation := OutsideToLocal(Intersection);
       WritelnLog('VisualizePick with %s', [Intersection.ToString]);
       WritelnLog('Line 1: %s %s, line 2 %s %s', [
@@ -200,9 +222,9 @@ begin
     have the same behavior (no need to invert angle sign for Y coord,
     as with RestOf3DCoords). }
   RestOf3DCoordsCycle(Coord, C1, C2);
-  PointProjected[0] := Intersection[C1];
-  PointProjected[1] := Intersection[C2];
-  Angle := ArcTan2(PointProjected[1], PointProjected[0]);
+  PointProjected.X := Intersection[C1];
+  PointProjected.Y := Intersection[C2];
+  Angle := ArcTan2(PointProjected.Y, PointProjected.X);
   Result := true;
 end;
 
@@ -234,7 +256,7 @@ function TVisualizeTransform.TGizmoScene.LocalRayCollision(
 begin
   Result := inherited;
   { Hack to make picking of the gizmo work even when gizmo is obscured
-    by other TCastleTransform (including bbox of UniqueParent, which is what
+    by other TCastleTransform (including bbox of Parent, which is what
     we actually want to transform).
     Hacking Distance to be smallest possible means that it "wins"
     when TCastleTransform.LocalRayCollision desides which collision
@@ -253,6 +275,7 @@ var
 {$endif DEBUG_GIZMO_PICK}
 begin
   inherited Create(AOwner);
+  InternalExistsOnlyInMeaningfulParents := true;
 
   {$ifdef DEBUG_GIZMO_PICK}
   VisualizePick := TCastleScene.Create(Self);
@@ -289,8 +312,8 @@ procedure TVisualizeTransform.TGizmoScene.UpdateSize;
 
   function Projected(const V, X, Y: TVector3): TVector2;
   begin
-    Result[0] := TVector3.DotProduct(V, X);
-    Result[1] := TVector3.DotProduct(V, Y);
+    Result.X := TVector3.DotProduct(V, X);
+    Result.Y := TVector3.DotProduct(V, Y);
   end;
 
 var
@@ -302,15 +325,15 @@ var
   begin
     if GizmoScalingAssumeScale then
     begin
-      OldScale := UniqueParent.Scale;
-      UniqueParent.Scale := GizmoScalingAssumeScaleValue;
+      OldScale := Parent.Scale;
+      Parent.Scale := GizmoScalingAssumeScaleValue;
     end;
   end;
 
   procedure EndWorldTransform;
   begin
     if GizmoScalingAssumeScale then
-      UniqueParent.Scale := OldScale;
+      Parent.Scale := OldScale;
   end;
 
   function GetPerspectiveGizmoScale(const Camera: TCastleCamera; const BaseGizmoScale: Single): Single;
@@ -322,7 +345,16 @@ var
     OneDistance: Single;
     ZeroWorld, OneWorld, OneProjected3, ZeroProjected3, CameraPos, CameraSide: TVector3;
     CameraNearPlane: TVector4;
+    SceneSizeMultiplier: Single;
   begin
+    { In theory, any value of SceneSizeMultiplier is OK,
+      and it could be always 1.0.
+      But on large scenes, this makes huge precision problems with calculation
+      below, as OneWorld will be very close to ZeroWorld and then OneDistance is tiny.
+      So we use to calculate in larger coordinates, and then scale it back to achieve the same.
+      Testcase: gizmo_flickering_bug . }
+    SceneSizeMultiplier := World.BoundingBox.AverageSize(false, 1.0);
+
     BeginWorldTransform;
 
     { Map two points from gizmo local transformation,
@@ -336,7 +368,7 @@ var
     ZeroWorld := LocalToWorld(TVector3.Zero);
     { Note: We use Camera.Up, not Camera.GravityUp, to work sensibly even
       when looking at world at a direction similar to +Y. }
-    OneWorld := LocalToWorld(WorldToLocalDirection(Camera.Up).Normalize);
+    OneWorld := LocalToWorld(WorldToLocalDirection(Camera.Up).AdjustToLength(SceneSizeMultiplier));
 
     EndWorldTransform;
 
@@ -347,10 +379,14 @@ var
     *)
 
     CameraPos := Camera.Position;
-    CameraNearPlane.XYZ := Camera.Direction;
-    { plane equation should yield 0 when used with point in front of camera }
-    CameraNearPlane.W := - TVector3.DotProduct(
-      CameraPos + Camera.Direction * AssumeNear, Camera.Direction);
+    CameraNearPlane := Vector4(
+      Camera.Direction,
+      { plane equation should yield 0 when used with point in front of camera }
+      - TVector3.DotProduct(
+          CameraPos + Camera.Direction * AssumeNear * SceneSizeMultiplier,
+          Camera.Direction
+        )
+    );
     if not TryPlaneLineIntersection(OneProjected3, CameraNearPlane, CameraPos, OneWorld - CameraPos) then
       Exit(1.0); // no valid value can be calculated
     if not TryPlaneLineIntersection(ZeroProjected3, CameraNearPlane, CameraPos, ZeroWorld - CameraPos) then
@@ -364,9 +400,12 @@ var
     OneDistance := PointsDistance(ZeroProjected, OneProjected);
 
     if IsZero(OneDistance) then
-      Result := 1
+      Result := SceneSizeMultiplier
     else
-      Result := BaseGizmoScale / OneDistance;
+      { Multiply by SceneSizeMultiplier 2x because
+        1. it increases OneWorld
+        2. it increases camera near (at AssumeNear) }
+      Result := Sqr(SceneSizeMultiplier) * BaseGizmoScale / OneDistance;
   end;
 
 var
@@ -384,7 +423,7 @@ begin
     begin
       { We just want gizmo is about 15% of effective height }
       GizmoScale := 0.15 * Camera.Orthographic.EffectiveHeight;
-      ScaleUniform := UniqueParent.WorldToLocalDistance(GizmoScale);
+      ScaleUniform := Parent.WorldToLocalDistance(GizmoScale);
     end else
     begin
       GizmoScale := 0.25 {TODO:* Camera.Perspective.EffeectiveFieldOfViewVertical};
@@ -408,6 +447,19 @@ function TVisualizeTransform.TGizmoScene.PointingDevicePress(
 var
   AppearanceName: String;
   CanDrag: Boolean;
+
+  function IsOrthographicTranslation: Boolean;
+  begin
+    Result := (
+       (Operation = voTranslate)
+       and HasWorldTransform
+       and (World <> nil)
+       and (World.MainCamera <> nil)
+       and (World.MainCamera.ProjectionType = ptOrthographic)
+       and (TVector3.Equals(World.MainCamera.Direction, Vector3(0, 0, -1)))
+      );
+  end;
+
 begin
   Result := inherited;
   if Result then Exit;
@@ -421,8 +473,22 @@ begin
     case AppearanceName of
       'MaterialX': DraggingCoord := 0;
       'MaterialY': DraggingCoord := 1;
-      'MaterialZ': DraggingCoord := 2;
-      'MaterialCenter': DraggingCoord := -1;
+      'MaterialZ':
+        begin
+          { In 2D mode dragging Z axis means translate in X and Y. }
+          if IsOrthographicTranslation then
+            DraggingCoord := -2
+          else
+            DraggingCoord := 2;
+        end;
+      'MaterialCenter':
+        begin
+          { In 2D mode dragging center square means translate in X and Y. }
+          if IsOrthographicTranslation then
+            DraggingCoord := -2
+          else if (Operation = voScale) then
+            DraggingCoord := -1;
+        end;
       else Exit;
     end;
 
@@ -445,7 +511,7 @@ begin
           During a single drag, we behave like Scale is constant.
           Gizmo will be correctly scaled when you release. }
         GizmoScalingAssumeScale := true;
-        GizmoScalingAssumeScaleValue := UniqueParent.Scale;
+        GizmoScalingAssumeScaleValue := Parent.Scale;
       end;
       GizmoDragging := true;
       // keep tracking pointing device events, by TCastleViewport.CapturePointingDevice mechanism
@@ -481,18 +547,23 @@ begin
           begin
             Diff := NewPick - LastPick;
             { Our gizmo display and interaction is affected by existing
-              UniqueParent.Rotation although the UniqueParent.Translation
+              Parent.Rotation although the Parent.Translation
               is applied before rotation technically.
               So we need to manually multiply Diff by curent rotation. }
-            Diff := RotatePointAroundAxis(UniqueParent.Rotation, Diff);
-            Diff := Diff * UniqueParent.Scale;
-            UniqueParent.Translation := UniqueParent.Translation + Diff;
+            Diff := RotatePointAroundAxis(Parent.Rotation, Diff);
+            if DraggingCoord >= 0 then
+              { We need to apply only scale in 1 axis,
+                https://forum.castle-engine.io/t/creating-a-non-linear-strategic-adventure/403/22 }
+              Diff := Diff * Parent.Scale[DraggingCoord]
+            else
+              Diff := Diff * Parent.Scale;
+            Parent.Translation := Parent.Translation + Diff;
           end;
         voRotate:
           begin
             DiffAngle := NewPickAngle - LastPickAngle;
-            UniqueParent.Rotation := (
-              QuatFromAxisAngle(UniqueParent.Rotation) *
+            Parent.Rotation := (
+              QuatFromAxisAngle(Parent.Rotation) *
               QuatFromAxisAngle(TVector3.One[DraggingCoord], DiffAngle)).
               ToAxisAngle;
           end;
@@ -500,17 +571,17 @@ begin
           begin
             for I := 0 to 2 do
               if IsZero(LastPick[I]) then
-                Diff[I] := 1
+                Diff.InternalData[I] := 1
               else
-                Diff[I] := NewPick[I] / LastPick[I];
-            UniqueParent.Scale := UniqueParent.Scale * Diff;
+                Diff.InternalData[I] := NewPick[I] / LastPick[I];
+            Parent.Scale := Parent.Scale * Diff;
           end;
       end;
 
       { No point in updating LastPick or LastPickAngle:
         it remains the same, as it is expressed
         in local coordinate system, which we just changed by changing
-        UniqueParent.Translation. }
+        Parent.Translation. }
 
       // update our gizmo size, as we moved ourselves
       UpdateSize;

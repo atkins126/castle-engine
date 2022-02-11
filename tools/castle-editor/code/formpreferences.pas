@@ -1,5 +1,5 @@
 {
-  Copyright 2019-2021 Michalis Kamburelis.
+  Copyright 2019-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -31,6 +31,14 @@ type
     DirectoryEditLazarus: TDirectoryEdit;
     EditCodeEditorCommand: TFileNameEdit;
     EditCodeEditorCommandProject: TFileNameEdit;
+    LabelCodeEditorAutodetect: TLabel;
+    LabelCompilerAutodetect: TLabel;
+    LabelCompilerDelphi: TLabel;
+    LabelCompilationHeader: TLabel;
+    LabelCodeEditorLazarus: TLabel;
+    LabelCodeEditorDelphi: TLabel;
+    LabelCompilerFpc: TLabel;
+    LabelCodeEditorVSCode: TLabel;
     LabelInstructions0: TLabel;
     LabelInstructions1: TLabel;
     LabelInstructions2: TLabel;
@@ -49,12 +57,19 @@ type
     LabelFpcAutoDetected: TLabel;
     LabelLazarusAutoDetected: TLabel;
     ListPages: TListBox;
+    PanelCompilation: TPanel;
     PanelInstructions: TPanel;
     PanelCodeEditor: TPanel;
     PanelSound: TPanel;
     PanelFpcLazarusConfig: TPanel;
-    RadioCodeEditorLazarus: TRadioButton;
+    RadioCodeEditorAutodetect: TRadioButton;
+    RadioCompilerAutodetect: TRadioButton;
     RadioCodeEditorCustom: TRadioButton;
+    RadioCompilerDelphi: TRadioButton;
+    RadioCodeEditorLazarus: TRadioButton;
+    RadioCodeEditorDelphi: TRadioButton;
+    RadioCompilerFpc: TRadioButton;
+    RadioCodeEditorVSCode: TRadioButton;
     TrackVolume: TTrackBar;
     procedure ButtonRegisterLazarusPackagesClick(Sender: TObject);
     procedure DirectoryEditFpcChange(Sender: TObject);
@@ -84,7 +99,7 @@ var
 implementation
 
 uses CastleOpenDocument, CastleUtils, CastleLog, CastleSoundEngine,
-  ToolCompilerInfo, ToolFpcVersion, ToolCommonUtils,
+  ToolCompilerInfo, ToolFpcVersion, ToolCommonUtils, ToolManifest,
   EditorUtils;
 
 {$R *.lfm}
@@ -117,8 +132,9 @@ end;
 
 procedure TPreferencesForm.UpdateAutoDetectedLabels;
 var
-  FpcExe, FpcVer, LazarusExe: String;
+  FpcExe, FpcVer, LazarusExe, LazarusVer, DelphiPath, VSCodeExe: String;
 begin
+  FpcExe := '';
   try
     FpcExe := FindExeFpcCompiler;
     FpcVer := FpcVersion.ToString;
@@ -135,10 +151,13 @@ begin
     end;
   end;
 
+  LazarusExe := '';
   try
     LazarusExe := FindExeLazarusIDE;
+    LazarusVer := LazarusVersion.ToString;
     LabelLazarusAutoDetected.Caption :=
-      'Lazarus executable: ' + LazarusExe;
+      'Lazarus executable: ' + LazarusExe + NL +
+      'Lazarus version: ' + LazarusVer;
   except
     on E: EExecutableNotFound do
     begin
@@ -148,6 +167,52 @@ begin
         'Make sure Lazarus is installed, and available on $PATH or configured above.';
     end;
   end;
+
+  if FpcExe <> '' then
+    LabelCompilerFpc.Caption := 'Detected: ' + FpcExe
+  else
+    LabelCompilerFpc.Caption := 'Not found.';
+
+  if LazarusExe <> '' then
+    LabelCodeEditorLazarus.Caption := 'Detected: ' + LazarusExe
+  else
+    LabelCodeEditorLazarus.Caption := 'Not found.';
+
+  DelphiPath := FindDelphiPath(false);
+  if DelphiPath <> '' then
+  begin
+    LabelCodeEditorDelphi.Caption := 'Detected path: ' + DelphiPath;
+    LabelCompilerDelphi.Caption := 'Detected path: ' + DelphiPath;
+  end else
+  begin
+    LabelCodeEditorDelphi.Caption := 'Not found.';
+    LabelCompilerDelphi.Caption := 'Not found.';
+  end;
+
+  VSCodeExe := FindExeVSCode(false);
+  if VSCodeExe <> '' then
+    LabelCodeEditorVSCode.Caption := 'Detected: ' + VSCodeExe
+  else
+    LabelCodeEditorVSCode.Caption := 'Not found.';
+
+  if LazarusExe <> '' then
+    LabelCodeEditorAutodetect.Caption := 'First auto-detected IDE: Lazarus'
+  else
+  if DelphiPath <> '' then
+    LabelCodeEditorAutodetect.Caption := 'First auto-detected IDE: Delphi'
+  else
+  if VSCodeExe <> '' then
+    LabelCodeEditorAutodetect.Caption := 'First auto-detected IDE: Visual Studio Code'
+  else
+    LabelCodeEditorAutodetect.Caption := 'First auto-detected IDE: None';
+
+  if FpcExe <> '' then
+    LabelCompilerAutodetect.Caption := 'First auto-detected compiler: FPC'
+  else
+  if DelphiPath <> '' then
+    LabelCompilerAutodetect.Caption := 'First auto-detected compiler: Delphi'
+  else
+    LabelCompilerAutodetect.Caption := 'First auto-detected compiler: None';
 end;
 
 procedure TPreferencesForm.FormShow(Sender: TObject);
@@ -169,12 +234,23 @@ begin
 
   // Note that making any RadioCodeEditorXxx checked will uncheck the others
   case CodeEditor of
-    ceCustom: RadioCodeEditorCustom.Checked := true;
-    ceLazarus: RadioCodeEditorLazarus.Checked := true;
+    ceAutodetect: RadioCodeEditorAutodetect.Checked := true;
+    ceLazarus   : RadioCodeEditorLazarus.Checked := true;
+    ceDelphi    : RadioCodeEditorDelphi.Checked := true;
+    ceVSCode    : RadioCodeEditorVSCode.Checked := true;
+    ceCustom    : RadioCodeEditorCustom.Checked := true;
     else raise EInternalError.Create('CodeEditor?');
   end;
   EditCodeEditorCommand.Text := CodeEditorCommand;
   EditCodeEditorCommandProject.Text := CodeEditorCommandProject;
+
+  // compilation tab
+  case Compiler of
+    coAutodetect: RadioCompilerAutodetect.Checked := true;
+    coFpc       : RadioCompilerFpc.Checked := true;
+    coDelphi    : RadioCompilerDelphi.Checked := true;
+    else raise EInternalError.Create('Compiler?');
+  end;
 
   // sound tab
   TrackVolume.Position := Round(EditorVolume * TrackVolume.Max);
@@ -192,9 +268,34 @@ begin
     if RadioCodeEditorCustom.Checked then
       CodeEditor := ceCustom
     else
-      CodeEditor := ceLazarus;
+    if RadioCodeEditorAutodetect.Checked then
+      CodeEditor := ceAutodetect
+    else
+    if RadioCodeEditorLazarus.Checked then
+      CodeEditor := ceLazarus
+    else
+    if RadioCodeEditorDelphi.Checked then
+      CodeEditor := ceDelphi
+    else
+    if RadioCodeEditorVSCode.Checked then
+      CodeEditor := ceVSCode
+    else
+      raise EInternalError.Create('Cannot determine CodeEditor choice, no radio selected');
+
     CodeEditorCommand := EditCodeEditorCommand.Text;
     CodeEditorCommandProject := EditCodeEditorCommandProject.Text;
+
+    // compilation tab
+    if RadioCompilerAutodetect.Checked then
+      Compiler := coAutodetect
+    else
+    if RadioCompilerFpc.Checked then
+      Compiler := coFpc
+    else
+    if RadioCompilerDelphi.Checked then
+      Compiler := coDelphi
+    else
+      raise EInternalError.Create('Cannot determine Compiler choice, no radio selected');
 
     // sound tab
     EditorVolume := TrackVolume.Position / TrackVolume.Max;
@@ -240,16 +341,14 @@ procedure TPreferencesForm.ButtonRegisterLazarusPackagesClick(Sender: TObject);
 var
   ExecutionLog: String;
 
-  procedure RegisterPackage(const Name: String);
+  procedure RegisterPackage(const LpkFileName: String);
   var
     LazbuildExe, LazbuildOutput, PackageFileName, CommandLog: String;
     LazbuildExitStatus: integer;
   begin
-    LazbuildExe := FindExeLazarus('lazbuild');
-    if LazbuildExe = '' then
-      raise EExecutableNotFound.Create('Cannot find "lazbuild" program. Make sure it is installed, and set Lazarus location in CGE editor "Preferences".');
+    LazbuildExe := FindExeLazbuild;
 
-    PackageFileName := CastleEnginePath + 'packages' + PathDelim + Name + '.lpk';
+    PackageFileName := CastleEnginePath + LpkFileName;
 
     MyRunCommandIndir(
       GetCurrentDir { no better directory, but also should not matter },
@@ -271,11 +370,15 @@ begin
   ExecutionLog := 'Lazarus packages registed successfully.' + NL + NL +
     'Executed the following commands:';
   try
-    RegisterPackage('castle_base');
-    RegisterPackage('castle_window');
-    RegisterPackage('castle_components');
-    RegisterPackage('alternative_castle_window_based_on_lcl');
-    RegisterPackage('castle_indy');
+    RegisterPackage('src/vampyre_imaginglib/src/Packages/VampyreImagingPackage.lpk');
+    RegisterPackage('src/vampyre_imaginglib/src/Packages/VampyreImagingPackageExt.lpk');
+
+    RegisterPackage('packages/castle_base.lpk');
+    RegisterPackage('packages/castle_window.lpk');
+    RegisterPackage('packages/castle_components.lpk');
+    RegisterPackage('packages/alternative_castle_window_based_on_lcl.lpk');
+    RegisterPackage('packages/castle_indy.lpk');
+
     ShowMessage(ExecutionLog);
   except
     on E: Exception do
@@ -308,13 +411,15 @@ var
   SelectedPage: TPanel;
 begin
   case ListPages.ItemIndex of
-    0: SelectedPage := PanelFpcLazarusConfig;
-    1: SelectedPage := PanelCodeEditor;
-    2: SelectedPage := PanelSound;
+    0: SelectedPage := PanelCodeEditor;
+    1: SelectedPage := PanelCompilation;
+    2: SelectedPage := PanelFpcLazarusConfig;
+    3: SelectedPage := PanelSound;
     else raise Exception.CreateFmt('Unexpected ListPages.ItemIndex %d', [ListPages.ItemIndex]);
   end;
-  SetEnabledVisible(PanelFpcLazarusConfig, PanelFpcLazarusConfig = SelectedPage);
   SetEnabledVisible(PanelCodeEditor      , PanelCodeEditor       = SelectedPage);
+  SetEnabledVisible(PanelCompilation     , PanelCompilation       = SelectedPage);
+  SetEnabledVisible(PanelFpcLazarusConfig, PanelFpcLazarusConfig = SelectedPage);
   SetEnabledVisible(PanelSound           , PanelSound            = SelectedPage);
 end;
 

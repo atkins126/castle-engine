@@ -20,7 +20,8 @@ interface
 
 uses Classes,
   CastleUtils, CastleStringUtils,
-  ToolUtils, ToolArchitectures, ToolCompile, ToolProject, ToolPackage;
+  ToolUtils, ToolArchitectures, ToolCompile, ToolProject, ToolPackageFormat,
+  ToolManifest;
 
 var
   IosSimulatorSupport: Boolean = false;
@@ -32,20 +33,20 @@ type
     atAppStore
   );
 
-procedure CompileIOS(
+procedure CompileIOS(const Compiler: TCompiler;
   const Mode: TCompilationMode; const WorkingDirectory, CompileFile: string;
   const SearchPaths, LibraryPaths, ExtraOptions: TStrings);
 
-procedure LinkIOSLibrary(const CompilationWorkingDirectory, OutputFile: string);
+procedure LinkIOSLibrary(const Compiler: TCompiler;
+  const CompilationWorkingDirectory, OutputFile: string);
 
-function PackageFormatWantsIOSArchive(const PackageFormat: TPackageFormat;
+function PackageFormatWantsIOSArchive(const PackageFormat: TPackageFormatNoDefault;
   out ArchiveType: TIosArchiveType; out ExportMethod: String): Boolean;
 
 procedure PackageIOS(const Project: TCastleProject;
   const UpdateOnlyCode: Boolean);
 { Call ArchiveIOS immediately after PackageIOS to perform build + archive using Xcode command-line. }
 procedure ArchiveIOS(const Project: TCastleProject; const ArchiveType: TIosArchiveType);
-procedure InstallIOS(const Project: TCastleProject);
 procedure RunIOS(const Project: TCastleProject);
 
 procedure MergeIOSAppDelegate(const Source, Destination: string;
@@ -65,7 +66,7 @@ uses SysUtils, DOM,
 const
   IOSPartialLibraryName = 'lib_cge_project.a';
 
-procedure CompileIOS(
+procedure CompileIOS(const Compiler: TCompiler;
   const Mode: TCompilationMode; const WorkingDirectory, CompileFile: string;
   const SearchPaths, LibraryPaths, ExtraOptions: TStrings);
 var
@@ -77,12 +78,12 @@ var
     LinkResContents, ObjectFiles: TCastleStringList;
     I: Integer;
   begin
-    Compile(OS, CPU, { Plugin } false, Mode, WorkingDirectory, CompileFile,
+    Compile(Compiler, OS, CPU, { Plugin } false, Mode, WorkingDirectory, CompileFile,
       SearchPaths, LibraryPaths, FinalExtraOptions);
 
     { now use libtool to create a static library .a }
 
-    CompilationOutput := CompilationOutputPath(OS, CPU, WorkingDirectory);
+    CompilationOutput := CompilationOutputPath(Compiler, OS, CPU, WorkingDirectory);
 
     // will raise exception if not found, or ambiguous
     LinkRes := FindLinkRes(CompilationOutput);
@@ -131,7 +132,7 @@ begin
   finally FreeAndNil(FinalExtraOptions) end;
 end;
 
-procedure LinkIOSLibrary(const CompilationWorkingDirectory, OutputFile: string);
+procedure LinkIOSLibrary(const Compiler: TCompiler; const CompilationWorkingDirectory, OutputFile: string);
 var
   Options: TCastleStringList;
 begin
@@ -142,11 +143,11 @@ begin
     Options.Add(OutputFile);
     if IosSimulatorSupport then
     begin
-      Options.Add(CompilationOutputPath(iphonesim, i386   , CompilationWorkingDirectory) + IOSPartialLibraryName);
-      Options.Add(CompilationOutputPath(iphonesim, x86_64 , CompilationWorkingDirectory) + IOSPartialLibraryName);
+      Options.Add(CompilationOutputPath(Compiler, iphonesim, i386   , CompilationWorkingDirectory) + IOSPartialLibraryName);
+      Options.Add(CompilationOutputPath(Compiler, iphonesim, x86_64 , CompilationWorkingDirectory) + IOSPartialLibraryName);
     end;
-    Options.Add(CompilationOutputPath(iOS   , arm    , CompilationWorkingDirectory) + IOSPartialLibraryName);
-    Options.Add(CompilationOutputPath(iOS   , aarch64, CompilationWorkingDirectory) + IOSPartialLibraryName);
+    Options.Add(CompilationOutputPath(Compiler, iOS   , arm    , CompilationWorkingDirectory) + IOSPartialLibraryName);
+    Options.Add(CompilationOutputPath(Compiler, iOS   , aarch64, CompilationWorkingDirectory) + IOSPartialLibraryName);
     RunCommandSimple('libtool', Options.ToArray);
   finally FreeAndNil(Options) end;
 end;
@@ -248,6 +249,28 @@ var
       if Icon = DefaultIconSquare then
         Icon := nil else
         FreeAndNil(Icon);
+    end;
+  end;
+
+  { Generate "Launch Screen.storyboard" and LaunchScreenImage.png it references. }
+  procedure GenerateLaunchImageStoryboard;
+  var
+    Storyboard, ProjectOutputUrl, ImageUrl: String;
+  begin
+    if Project.IOSHasLaunchImageStoryboard then
+    begin
+      ProjectOutputUrl := FilenameToURISafe(XcodeProject + Project.Name + PathDelim);
+
+      Storyboard := FileToString('castle-data:/ios/Launch%20Screen.storyboard');
+      Storyboard := Project.ReplaceMacros(Storyboard);
+      StringToFile(ProjectOutputUrl + 'Launch%20Screen.storyboard', Storyboard);
+
+      ImageUrl := CombineURI(
+        Project.LaunchImageStoryboard.BaseUrl,
+        Project.LaunchImageStoryboard.Path);
+      CheckCopyFile(
+        URIToFilenameSafe(ImageUrl),
+        URIToFilenameSafe(ProjectOutputUrl + 'LaunchScreenImage.png'));
     end;
   end;
 
@@ -420,7 +443,8 @@ begin
     GenerateServicesFromTemplates;
     PackageServices(Project, Project.IOSServices,
       'castle-data:/ios/services/', XcodeProject);
-    FixPbxProjectFile; // must be done *after* all files for services are created, so also after ServiceOperations
+    GenerateLaunchImageStoryboard;
+    FixPbxProjectFile; // must be done *after* all files that have to be in PBX are in place, so after PackageServices and GenerateLaunchImageStoryboard
     GenerateIcons;
     GenerateLaunchImages;
     GenerateData;
@@ -434,7 +458,7 @@ begin
   end;
 end;
 
-function PackageFormatWantsIOSArchive(const PackageFormat: TPackageFormat;
+function PackageFormatWantsIOSArchive(const PackageFormat: TPackageFormatNoDefault;
   out ArchiveType: TIosArchiveType; out ExportMethod: String): Boolean;
 begin
   case PackageFormat of
@@ -535,12 +559,6 @@ begin
   // and copy it here to the final place,
   // replacing IOS_EXPORT_METHOD by a special code in this unit.
   // This would allow to simplify PackageFormatWantsIOSArchive?
-end;
-
-procedure InstallIOS(const Project: TCastleProject);
-begin
-  // TODO
-  raise Exception.Create('The "install" command is not implemented for iOS right now');
 end;
 
 procedure RunIOS(const Project: TCastleProject);

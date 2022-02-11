@@ -79,7 +79,7 @@
 
     { The priority of keeping this source, relevant only when @link(Used).
       See TCastleSound.Priority for the exact meaning and range. }
-    property Priority: Single read FPriority write SetPriority default 0.0;
+    property Priority: Single read FPriority write SetPriority {$ifdef FPC}default 0.0{$endif};
 
     { Any data comfortable to keep here by the caller of
       TSoundAllocator.AllocateSound. It should be initialized
@@ -122,10 +122,10 @@
     property Position: TVector3 read FPosition write SetPosition;
     property Velocity: TVector3 read FVelocity write SetVelocity;
     property Loop: boolean read FLoop write SetLoop;
-    property Looping: boolean read FLoop write SetLoop; deprecated 'use Loop';
+    {$ifdef FPC}property Looping: boolean read FLoop write SetLoop; deprecated 'use Loop';{$endif}
     property Spatial: boolean read FSpatial write SetSpatial;
     property Volume: Single read FVolume write SetVolume;
-    property Gain: Single read FVolume write SetVolume; deprecated 'use Volume';
+    {$ifdef FPC}property Gain: Single read FVolume write SetVolume; deprecated 'use Volume';{$endif}
     property MinGain: Single read FMinGain write SetMinGain;
     property MaxGain: Single read FMaxGain write SetMaxGain;
     property Buffer: TInternalSoundBuffer read FBuffer write SetBuffer;
@@ -165,7 +165,7 @@
       like in a loop, but without using the @link(Loop) property.
       The idea is that you leave @link(Loop) set to @false,
       and you keep calling this method from some "update" event
-      (like some @link(TInputListener.Update) implementation).
+      (like some @link(TCastleUserInterface.Update) implementation).
       Once you stop calling this method, the sound will automatically stop
       (once it finishes the current cycle).
 
@@ -190,7 +190,7 @@
 
   TSound = TInternalSoundSource deprecated 'play sounds using TCastleSoundSource + TCastleSound';
 
-  TInternalSoundSourceList = class({$ifdef CASTLE_OBJFPC}specialize{$endif} TObjectList<TInternalSoundSource>)
+  TInternalSoundSourceList = class({$ifdef FPC}specialize{$endif} TObjectList<TInternalSoundSource>)
   public
     { Sort sounds by Used + Priority, descending.
       First all sounds with Used = @true are placed,
@@ -231,6 +231,8 @@ begin
 end;
 
 procedure TInternalSoundSource.Release;
+var
+  SavedOnRelease: TInternalSoundSourceEvent;
 begin
   FUsed := false;
 
@@ -244,8 +246,18 @@ begin
 
   if Assigned(OnRelease) then
   begin
-    OnRelease(Self);
+    { Note that calling OnRelease may do anything, it may even reuse this sound
+      and set the OnRelease again. This is possible when using TCastlePlayingSound:
+      if in OnStop of one TCastlePlayingSound, you will start playing another
+      TCastlePlayingSound, it may reuse the same TInternalSoundSource.
+
+      So *do not* do "OnRelease := nil" after calling OnRelease, do it before.
+      That's why we need to keep it in SavedOnRelease.
+
+      Testcase: https://github.com/castle-engine/castle-engine/issues/344 }
+    SavedOnRelease := OnRelease;
     OnRelease := nil;
+    SavedOnRelease(Self);
   end;
 end;
 
@@ -362,7 +374,7 @@ end;
 
 { TInternalSoundSourceList ----------------------------------------------------- }
 
-function IsSmallerByPriority(constref AA, BB: TInternalSoundSource): Integer;
+function IsSmallerByPriority({$ifdef FPC}constref{$else}const{$endif} AA, BB: TInternalSoundSource): Integer;
 begin
   if (AA.Used and (not BB.Used)) or
      (AA.Used and BB.Used and (AA.Priority > BB.Priority)) then
@@ -375,10 +387,10 @@ end;
 
 procedure TInternalSoundSourceList.SortByPriority;
 type
-  TInternalSoundSourceComparer = {$ifdef CASTLE_OBJFPC}specialize{$endif} TComparer<TInternalSoundSource>;
+  TInternalSoundSourceComparer = {$ifdef FPC}specialize{$endif} TComparer<TInternalSoundSource>;
 begin
   Sort(TInternalSoundSourceComparer.Construct(
-    {$ifdef CASTLE_OBJFPC}@{$endif} IsSmallerByPriority));
+    {$ifdef FPC}@{$endif} IsSmallerByPriority));
 end;
 
 {$endif read_implementation}

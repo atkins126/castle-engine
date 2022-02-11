@@ -1,5 +1,5 @@
 {
-  Copyright 2014-2020 Michalis Kamburelis.
+  Copyright 2014-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -22,16 +22,31 @@ interface
 
 uses Classes,
   CastleStringUtils,
-  ToolArchitectures;
+  ToolManifest, ToolArchitectures;
 
 type
   TCompilationMode = (cmRelease, cmValgrind, cmDebug);
 
-{ Compile with FPC and proper command-line option given file.
+{ Compile with Pascal compiler.
   SearchPaths, ExtraOptions may be @nil (same as empty). }
-procedure Compile(const OS: TOS; const CPU: TCPU; const Plugin: boolean;
+procedure Compile(Compiler: TCompiler;
+  const OS: TOS; const CPU: TCPU; const Plugin: boolean;
   const Mode: TCompilationMode; const WorkingDirectory, CompileFile: string;
   const SearchPaths, LibraryPaths: TStrings;
+  const ExtraOptions: TStrings);
+
+{ Compile with FPC and proper command-line option given file.
+  SearchPaths, ExtraOptions may be @nil (same as empty). }
+procedure CompileFpc(const OS: TOS; const CPU: TCPU; const Plugin: boolean;
+  const Mode: TCompilationMode; const WorkingDirectory, CompileFile: string;
+  const SearchPaths, LibraryPaths: TStrings;
+  const ExtraOptions: TStrings);
+
+{ Compile with Delphi and proper command-line option given file.
+  SearchPaths, ExtraOptions may be @nil (same as empty). }
+procedure CompileDelphi(const OS: TOS; const CPU: TCPU;
+  const Mode: TCompilationMode; const WorkingDirectory, CompileFile: string;
+  const SearchPaths: TStrings;
   const ExtraOptions: TStrings);
 
 { Compile with lazbuild. }
@@ -47,7 +62,8 @@ procedure RunLazbuild(const WorkingDirectory: String; const LazbuildOptions: arr
 
 { Output path, where temporary things like units (and iOS stuff)
   are placed. }
-function CompilationOutputPath(const OS: TOS; const CPU: TCPU;
+function CompilationOutputPath(const Compiler: TCompiler;
+  const OS: TOS; const CPU: TCPU;
   const WorkingDirectory: string): string;
 
 function ModeToString(const M: TCompilationMode): string;
@@ -58,6 +74,85 @@ var
     from the fpc-3.0.3.intel-macosx.cross.ios.dmg
     (official "FPC for iOS" installation). }
   FpcVersionForIPhoneSimulator: string = 'auto';
+
+const
+  { Paths with units and include files that are for all OSes and all compilers.
+
+    Note:
+
+    - We don't bother trying to have separate include dirs (.inc) and units (.pas).
+      We just pass the same paths for both includes and units, this is simpler.
+
+    - We pass all paths, even system-specific, regardless of the target
+      OS/architecture.
+
+      We tried smarter approach in the past (such that you could have e.g.
+      "windows/castle_system_specific.inc" and "unix/castle_system_specific.inc",
+      and compiler recognized what to do on [$I castle_system_specific.inc]
+      based on include paths)...
+      but it was not really friendly for Lazarus lpk.
+
+      So it is simpler to just name all includes and units differently,
+      even across system-specific dirs. }
+
+  EnginePaths: array [0..41] of String = (
+    'base',
+    'common_includes',
+    'base/android',
+    'base/windows',
+    'base/unix',
+    'base_rendering',
+    'base_rendering/glsl/generated-pascal',
+    'fonts',
+    'window',
+    'window/gtk',
+    'window/windows',
+    'window/unix',
+    'window/deprecated_units',
+    'images',
+    'transform',
+    'scene',
+    'scene/glsl/generated-pascal',
+    'scene/x3d',
+    'scene/load',
+    'scene/load/spine',
+    'scene/load/collada',
+    'scene/load/pasgltf',
+    'audio',
+    'audio/fmod',
+    'audio/openal',
+    'audio/ogg_vorbis',
+    'files',
+    'files/indy',
+    'castlescript',
+    'ui',
+    'ui/windows',
+    'services',
+    'physics',
+    'physics/kraft',
+    'deprecated_units',
+    { Vampyre Imaging Library }
+    'vampyre_imaginglib/src/Source',
+    'vampyre_imaginglib/src/Source/JpegLib',
+    'vampyre_imaginglib/src/Source/ZLib',
+    'vampyre_imaginglib/src/Extras/Extensions',
+    'vampyre_imaginglib/src/Extensions/J2KObjects',
+    'vampyre_imaginglib/src/Extensions/LibTiff',
+    'vampyre_imaginglib/src/Extensions'
+  );
+
+  { Additional include/units paths, only for Delphi. }
+  EnginePathsDelphi: array [0..1] of String = (
+    'compatibility/delphi-only',
+    'compatibility/delphi-only/fcl-json'
+  );
+
+  { Paths for library (object) files.
+    For FPC these are passed using -Fl. }
+  EngineLibraryPaths: array [0..1] of String = (
+    'vampyre_imaginglib/src/Extensions/J2KObjects',
+    'vampyre_imaginglib/src/Extensions/LibTiff/Compiled'
+  );
 
 implementation
 
@@ -151,7 +246,7 @@ var
   procedure DeleteFilesRecursive(const Mask: string);
   begin
     FindFiles(Directory, Mask, false,
-      {$ifdef CASTLE_OBJFPC}@{$endif} Helper.DeleteFoundFile, [ffRecursive]);
+      {$ifdef FPC}@{$endif} Helper.DeleteFoundFile, [ffRecursive]);
   end;
 
 begin
@@ -172,7 +267,7 @@ end;
 procedure FpcLazarusCrashRetry(const WorkingDirectory, ToolName, ProjectName: String);
 begin
   Writeln('-------------------------------------------------------------');
-  Writeln('It seems ' + ToolName + ' crashed. If you can reproduce this problem, please report it to http://bugs.freepascal.org/ ! We want to help ' + ProjectName + ' developers to fix this problem, and the only way to do it is to report it. If you need help creating a good bugreport, speak up on the ' + ProjectName + ' or Castle Game Engine mailing list.');
+  Writeln('It seems ' + ToolName + ' crashed. If you can reproduce this problem, please report it to http://bugs.freepascal.org/ ! We want to help ' + ProjectName + ' developers to fix this problem, and the only way to do it is to report it. If you need help creating a good bugreport, speak up on the ' + ProjectName + ' mailing list or Castle Game Engine forum.');
   Writeln;
   Writeln('As a workaround, right now we''ll clean your project, and (if we have permissions) the Castle Game Engine units, and try compiling again.');
   Writeln('-------------------------------------------------------------');
@@ -203,7 +298,7 @@ begin
   // Line := '<begin>' + Line + '<end>';
 end;
 
-procedure Compile(const OS: TOS; const CPU: TCPU; const Plugin: boolean;
+procedure CompileFpc(const OS: TOS; const CPU: TCPU; const Plugin: boolean;
   const Mode: TCompilationMode; const WorkingDirectory, CompileFile: string;
   const SearchPaths, LibraryPaths, ExtraOptions: TStrings);
 var
@@ -221,52 +316,13 @@ var
   end;
 
   procedure AddEngineSearchPaths;
+  var
+    S: String;
   begin
     if CastleEngineSrc <> '' then
     begin
-      { Note that we add OS-specific paths (windows, android, unix)
-        regardless of the target OS. There is no point in filtering them
-        only for specific OS, since all file names must be different anyway,
-        as Lazarus packages could not compile otherwise. }
-
-      AddEnginePath('base');
-      AddEnginePath('common_includes');
-      AddEnginePath('base/android');
-      AddEnginePath('base/windows');
-      AddEnginePath('base/unix');
-      AddEnginePath('base/opengl');
-      AddEnginePath('fonts');
-      AddEnginePath('fonts/opengl');
-      AddEnginePath('window');
-      AddEnginePath('window/gtk');
-      AddEnginePath('window/windows');
-      AddEnginePath('window/unix');
-      AddEnginePath('window/deprecated_units');
-      AddEnginePath('images');
-      AddEnginePath('images/opengl');
-      AddEnginePath('images/opengl/glsl/generated-pascal');
-      AddEnginePath('3d');
-      AddEnginePath('3d/opengl');
-      AddEnginePath('x3d');
-      AddEnginePath('x3d/opengl');
-      AddEnginePath('x3d/opengl/glsl/generated-pascal');
-      AddEnginePath('audio');
-      AddEnginePath('audio/fmod');
-      AddEnginePath('audio/openal');
-      AddEnginePath('audio/ogg_vorbis');
-      AddEnginePath('files');
-      AddEnginePath('files/indy');
-      AddEnginePath('castlescript');
-      AddEnginePath('ui');
-      AddEnginePath('ui/windows');
-      AddEnginePath('ui/opengl');
-      AddEnginePath('game');
-      AddEnginePath('services');
-      AddEnginePath('services/opengl');
-      AddEnginePath('physics');
-      AddEnginePath('physics/kraft');
-      AddEnginePath('pasgltf');
-      AddEnginePath('deprecated_units');
+      for S in EnginePaths do
+        AddEnginePath(S);
 
       if (not FpcVer.AtLeast(3, 1, 1)) or FpcVer.IsCodeTyphon then
         AddEnginePath('compatibility/generics.collections/src');
@@ -284,23 +340,32 @@ var
 
   procedure AddSearchPaths;
   var
-    I: Integer;
+    S: String;
   begin
     if SearchPaths <> nil then
-      for I := 0 to SearchPaths.Count - 1 do
+      for S in SearchPaths do
       begin
-        FpcOptions.Add('-Fu' + SearchPaths[I]);
-        FpcOptions.Add('-Fi' + SearchPaths[I]);
+        FpcOptions.Add('-Fu' + S);
+        FpcOptions.Add('-Fi' + S);
       end;
+  end;
+
+  procedure AddEngineLibraryPaths;
+  var
+    S: String;
+  begin
+    if CastleEngineSrc <> '' then
+      for S in EngineLibraryPaths do
+        FpcOptions.Add('-Fl' + CastleEngineSrc + S);
   end;
 
   procedure AddLibraryPaths;
   var
-    I: Integer;
+    S: String;
   begin
     if LibraryPaths <> nil then
-      for I := 0 to LibraryPaths.Count - 1 do
-        FpcOptions.Add('-Fl' + LibraryPaths[I]);
+      for S in LibraryPaths do
+        FpcOptions.Add('-Fl' + S);
   end;
 
   function IsIOS: boolean;
@@ -391,7 +456,9 @@ var
 
       { This option is actually ununsed, since we pass -Cn
         and later create the library manually. }
-      FpcOptions.Add('-o' + CompilationOutputPath(OS, CPU, WorkingDirectory) + 'libcge_ios_project_unused.a');
+      FpcOptions.Add('-o' +
+        CompilationOutputPath(coFpc, OS, CPU, WorkingDirectory) +
+        'libcge_ios_project_unused.a');
     end;
   end;
 
@@ -410,6 +477,7 @@ begin
 
     AddEngineSearchPaths;
     AddSearchPaths;
+    AddEngineLibraryPaths;
     AddLibraryPaths;
 
     { Specify the compilation options explicitly,
@@ -419,20 +487,9 @@ begin
     FpcOptions.Add('-l');
     FpcOptions.Add('-vwn');
     FpcOptions.Add('-Ci');
-    if GetEnvironmentVariable('CASTLE_ENGINE_TEST_DELPHI_MODE') = 'true' then
-    begin
-      FpcOptions.Add('-Mdelphi');
-      FpcOptions.Add('-Sm-');
-      FpcOptions.Add('-Sc-');
-      // Also define it, to allow eventually doing
-      // {$ifdef CASTLE_ENGINE_TEST_DELPHI_MODE}... in code.
-      FpcOptions.Add('-dCASTLE_ENGINE_TEST_DELPHI_MODE');
-    end else
-    begin
-      FpcOptions.Add('-Mobjfpc');
-      FpcOptions.Add('-Sm');
-      FpcOptions.Add('-Sc');
-    end;
+    FpcOptions.Add('-Mobjfpc');
+    FpcOptions.Add('-Sm');
+    FpcOptions.Add('-Sc');
     FpcOptions.Add('-Sg');
     FpcOptions.Add('-Si');
     FpcOptions.Add('-Sh');
@@ -550,7 +607,7 @@ begin
         end;
       cmValgrind:
         begin
-          { See https://github.com/castle-engine/castle-engine/wiki/Profiling-Using-Valgrind
+          { See https://castle-engine.io/profiling_using_valgrind
             for reasons of Valgrind options. }
           FpcOptions.Add('-gv');
           FpcOptions.Add('-gl');
@@ -566,7 +623,7 @@ begin
           FpcOptions.Add('-dDEBUG');
         end;
       {$ifndef COMPILER_CASE_ANALYSIS}
-      else raise EInternalError.Create('DoCompile: Mode?');
+      else raise EInternalError.Create('CompileFpc: Mode?');
       {$endif}
     end;
 
@@ -580,7 +637,7 @@ begin
       FpcOptions.Add('-CpARMV7A');
 
       { Necessary to work fast.
-        See https://github.com/castle-engine/castle-engine/wiki/Android-FAQ#notes-about-compiling-with-hard-floats--cfvfpv3 }
+        See https://castle-engine.io/android-FAQ#notes-about-compiling-with-hard-floats--cfvfpv3 }
       FpcOptions.Add('-CfVFPV3');
 
       { This allows to "sacrifice precision for performance"
@@ -639,7 +696,7 @@ begin
     end;
 
     FpcOptions.Add(CompileFile);
-    FpcOptions.Add('-FU' + CompilationOutputPath(OS, CPU, WorkingDirectory));
+    FpcOptions.Add('-FU' + CompilationOutputPath(coFpc, OS, CPU, WorkingDirectory));
 
     AddIOSOptions;
 
@@ -664,6 +721,186 @@ begin
         raise Exception.Create('Failed to compile');
     end;
   finally FreeAndNil(FpcOptions) end;
+end;
+
+procedure Compile(Compiler: TCompiler;
+  const OS: TOS; const CPU: TCPU; const Plugin: boolean;
+  const Mode: TCompilationMode; const WorkingDirectory, CompileFile: string;
+  const SearchPaths, LibraryPaths: TStrings;
+  const ExtraOptions: TStrings);
+begin
+  { resolve Compiler to something other than coAutodetect }
+  if Compiler = coAutodetect then
+  begin
+    if FindExeFpcCompiler(false) <> '' then
+      Compiler := coFpc
+    else
+    if FindDelphiPath(false) <> '' then
+      Compiler := coDelphi
+    else
+      raise Exception.Create('Neither FPC nor Delphi found, cannot autodetect compiler');
+  end;
+  Assert(Compiler <> coAutodetect);
+
+  case Compiler of
+    coFpc: CompileFpc(OS, CPU, Plugin, Mode, WorkingDirectory, CompileFile,
+      SearchPaths, LibraryPaths, ExtraOptions);
+    coDelphi: CompileDelphi(OS, CPU, Mode, WorkingDirectory, CompileFile,
+      SearchPaths, ExtraOptions);
+    else raise EInternalError.Create('Compile: Compiler?');
+  end;
+end;
+
+procedure CompileDelphi(const OS: TOS; const CPU: TCPU;
+  const Mode: TCompilationMode; const WorkingDirectory, CompileFile: string;
+  const SearchPaths: TStrings;
+  const ExtraOptions: TStrings);
+var
+  CastleEngineSrc: String;
+  DccOptions: TCastleStringList;
+
+  { Add search namespaces, to keep basic units like SysUtils accessible
+    without namespace. This follows the DPROJ settings generated by Delphi
+    for new projects. }
+  procedure AddSearchNamespaces;
+  const
+    SearchNamespacesGeneral = 'System;Xml;Data;Datasnap;Web;Soap';
+    SearchNamespacesWindows = 'Winapi;System.Win;Data.Win;Datasnap.Win;Web.Win;Soap.Win;Xml.Win;Bde';
+  var
+    SearchNamespaces: String;
+  begin
+    { calculate SearchNamespaces }
+    SearchNamespaces := SearchNamespacesGeneral;
+    if OS in AllWindowsOSes then
+      SearchNamespaces := SAppendPart(SearchNamespaces, ';', SearchNamespacesWindows);
+
+    DccOptions.Add('-NS' + SearchNamespaces);
+  end;
+
+  procedure AddEnginePath(Path: string);
+  begin
+    Path := CastleEngineSrc + Path;
+    if not DirectoryExists(Path) then
+      WritelnWarning('Path', 'Path "%s" does not exist. Make sure that $CASTLE_ENGINE_PATH points to the directory containing Castle Game Engine sources.', [Path]);
+    DccOptions.Add('-U' + Path);
+    DccOptions.Add('-I' + Path);
+  end;
+
+  procedure AddEngineSearchPaths;
+  var
+    S: String;
+  begin
+    if CastleEngineSrc <> '' then
+    begin
+      for S in EnginePaths do
+        AddEnginePath(S);
+      for S in EnginePathsDelphi do
+        AddEnginePath(S);
+    end;
+  end;
+
+  procedure AddSearchPaths;
+  var
+    S: String;
+  begin
+    if SearchPaths <> nil then
+      for S in SearchPaths do
+      begin
+        DccOptions.Add('-U' + S);
+        DccOptions.Add('-I' + S);
+      end;
+  end;
+
+  procedure AddOutputPaths;
+  var
+    OutPath: String;
+  begin
+    OutPath := CompilationOutputPath(coDelphi, OS, CPU, WorkingDirectory);
+    { Looks like DCCxxx cannot handle parameters with spaces? Answers
+        Fatal: F1026 File not found: 'Game.dpr'
+      for
+        -NUC:\Users\michalis\Documents\Castle Game Engine Projects\my-new-project-delphi3d\castle-engine-output\compilation\delphi\x86_64-win64\
+      Workaround: pass relative paths. }
+    OutPath := ExtractRelativePath(InclPathDelim(WorkingDirectory), OutPath);
+    DccOptions.Add('-NU' + OutPath);
+    DccOptions.Add('-NH' + OutPath);
+    DccOptions.Add('-NO' + OutPath);
+    DccOptions.Add('-NB' + OutPath);
+    DccOptions.Add('-NX' + OutPath);
+  end;
+
+var
+  DelphiPath, Dcc, DccExe: String;
+  DccOutput: String;
+  DccExitStatus: Integer;
+begin
+  DelphiPath := FindDelphiPath(true);
+
+  { calculate Dcc, which is compiler basename with OS/CPU suffix.
+    The combinations confirmed to be possible in Delphi 11:
+
+      dcc32 - Win32
+      dcc64 - Win64
+      dccaarm - Android/Arm
+      dccaarm64 - Android/Arm64
+      dcciosarm64 - iOS/Arm64
+      dcclinux64 - Linux/x86_64
+      dccosx64 - macos/x86_64
+      dccosxarm64 - macos/Arm64
+  }
+  Dcc := 'dcc';
+  case OS of
+    Win32, Win64: ;
+    Android: Dcc += 'a';
+    iOS    : Dcc += 'ios';
+    Linux  : Dcc += 'linux';
+    MacOSX : Dcc += 'osx';
+    else raise Exception.CreateFmt('Operating system "%s" not supported by Delphi', [OSToString(OS)]);
+  end;
+  case CPU of
+    i386   : Dcc += '32';
+    x86_64 : Dcc += '64';
+    Arm    : Dcc += 'arm';
+    Aarch64: Dcc += 'arm64';
+    else raise Exception.CreateFmt('CPU "%s" not supported by Delphi', [CPUToString(CPU)]);
+  end;
+
+  DccExe := DelphiPath + 'bin' + PathDelim + Dcc + ExeExtension;
+  if not RegularFileExists(DccExe) then
+    raise Exception.CreateFmt('Cannot find Delphi compiler for this OS/CPU: %s', [DccExe]);
+
+  if CastleEnginePath <> '' then
+    CastleEngineSrc := CastleEnginePath + 'src' + PathDelim
+  else
+    CastleEngineSrc := '';
+
+  DccOptions := TCastleStringList.Create;
+  try
+    Writeln('Delphi compiler executing...');
+
+    AddSearchNamespaces;
+    AddEngineSearchPaths;
+    AddSearchPaths;
+    AddOutputPaths;
+
+    // TODO: Do something more useful for release optimizations or debugging
+    case Mode of
+      cmRelease, cmValgrind: DccOptions.Add('-dRELEASE');
+      cmDebug              : DccOptions.Add('-dDEBUG');
+      {$ifndef COMPILER_CASE_ANALYSIS}
+      else raise EInternalError.Create('CompileDelphi: Mode?');
+      {$endif}
+    end;
+
+    DccOptions.Add(CompileFile);
+
+    if ExtraOptions <> nil then
+      DccOptions.AddRange(ExtraOptions);
+
+    RunCommandIndirPassthrough(WorkingDirectory, DccExe, DccOptions.ToArray, DccOutput, DccExitStatus);
+    if DccExitStatus <> 0 then
+      raise Exception.Create('Failed to compile');
+  finally FreeAndNil(DccOptions) end;
 end;
 
 procedure RunLazbuild(const WorkingDirectory: String; const LazbuildOptions: TCastleStringList);
@@ -733,26 +970,26 @@ procedure CompileLazbuild(const OS: TOS; const CPU: TCPU;
   const WorkingDirectory, LazarusProjectFile: string);
 var
   LazbuildOptions: TCastleStringList;
+
+  procedure LazbuildAddPackage(const LpkFileName: String);
+  begin
+    LazbuildOptions.Clear;
+    LazbuildOptions.Add('--add-package-link');
+    LazbuildOptions.Add(CastleEnginePath + LpkFileName);
+    RunLazbuild(WorkingDirectory, LazbuildOptions);
+  end;
+
 begin
   LazbuildOptions := TCastleStringList.Create;
   try
     // register CGE packages first
     if CastleEnginePath <> '' then
     begin
-      LazbuildOptions.Clear;
-      LazbuildOptions.Add('--add-package-link');
-      LazbuildOptions.Add(CastleEnginePath + 'packages' + PathDelim + 'castle_base.lpk');
-      RunLazbuild(WorkingDirectory, LazbuildOptions);
-
-      LazbuildOptions.Clear;
-      LazbuildOptions.Add('--add-package-link');
-      LazbuildOptions.Add(CastleEnginePath + 'packages' + PathDelim + 'castle_window.lpk');
-      RunLazbuild(WorkingDirectory, LazbuildOptions);
-
-      LazbuildOptions.Clear;
-      LazbuildOptions.Add('--add-package-link');
-      LazbuildOptions.Add(CastleEnginePath + 'packages' + PathDelim + 'castle_components.lpk');
-      RunLazbuild(WorkingDirectory, LazbuildOptions);
+      LazbuildAddPackage('src/vampyre_imaginglib/src/Packages/VampyreImagingPackage.lpk');
+      LazbuildAddPackage('src/vampyre_imaginglib/src/Packages/VampyreImagingPackageExt.lpk');
+      LazbuildAddPackage('packages/castle_base.lpk');
+      LazbuildAddPackage('packages/castle_window.lpk');
+      LazbuildAddPackage('packages/castle_components.lpk');
     end;
 
     LazbuildOptions.Clear;
@@ -798,11 +1035,14 @@ begin
   finally FreeAndNil(LazbuildOptions) end;
 end;
 
-function CompilationOutputPath(const OS: TOS; const CPU: TCPU;
+function CompilationOutputPath(const Compiler: TCompiler;
+  const OS: TOS; const CPU: TCPU;
   const WorkingDirectory: string): string;
 begin
-  Result := TempOutputPath(WorkingDirectory) + 'compilation' + PathDelim +
-    CPUToString(CPU) + '-' + OSToString(OS) + PathDelim;
+  Result := TempOutputPath(WorkingDirectory) + 'compilation' + PathDelim;
+  if Compiler = coDelphi then
+    Result += 'delphi' + PathDelim;
+  Result += CPUToString(CPU) + '-' + OSToString(OS) + PathDelim;
   CheckForceDirectories(Result);
 end;
 

@@ -1,6 +1,6 @@
 // -*- compile-command: "cd ../ && ./compile_console.sh && ./test_castle_game_engine --suite=TTestCastleCompositeImage" -*-
 {
-  Copyright 2009-2021 Michalis Kamburelis.
+  Copyright 2009-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -31,7 +31,7 @@ type
 
 implementation
 
-uses SysUtils, CastleVectors, CastleImages, CastleCompositeImage, Classes;
+uses SysUtils, CastleVectors, CastleImages, CastleInternalCompositeImage, Classes;
 
 procedure TTestCastleCompositeImage.TestLoadSave;
 
@@ -127,7 +127,7 @@ begin
       on regular Linux/x86_64, and even using *the same* Docker image
       as used by Jenkins.
       That is, doing inside Docker image
-      (see https://github.com/castle-engine/castle-engine/wiki/Docker )
+      (see https://castle-engine.io/docker )
 
         source /usr/local/fpclazarus/bin/setup.sh trunk && make clean tools
         source /usr/local/fpclazarus/bin/setup.sh trunk && export PATH="${PATH}:${CASTLE_ENGINE_PATH}/tools/build-tool/" && make tests

@@ -1,6 +1,6 @@
 {%MainUnit castledownload.pas}
 {
-  Copyright 2013-2020 Michalis Kamburelis.
+  Copyright 2013-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -43,7 +43,10 @@ type
     this class. We will move the position within this stream ourselves. }
   TTextReader = class(TTextReaderWriter)
   private
-    ReadBuf: string;
+    { For now, Stream.Read call assumes that ReadBuf is 8-bit.
+      Changing ReadBuf to String on Delphi would break e.g. Spine atlas reading,
+      TTextReader.Readln would be garbage. }
+    ReadBuf: AnsiString;
     { Try to read more data from underlying stream and add it to ReadBuf.
       Returns if we succeded, @false means that the stream ends.
       When it returns @true, you can be sure that Length(ReadBuf) increased. }
@@ -233,9 +236,9 @@ end;
 
 function TTextReader.ReadVector3: TVector3;
 begin
-  Result[0] := ReadSingle;
-  Result[1] := ReadSingle;
-  Result[2] := ReadSingle;
+  Result.X := ReadSingle;
+  Result.Y := ReadSingle;
+  Result.Z := ReadSingle;
 end;
 
 function TTextReader.ReadVector3Single: TVector3;

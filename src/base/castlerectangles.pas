@@ -1,5 +1,5 @@
 {
-  Copyright 2006-2018 Michalis Kamburelis.
+  Copyright 2006-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -456,7 +456,7 @@ type
   TFloatRectangleArray = packed array [0..MaxInt div SizeOf(TFloatRectangle) - 1] of TFloatRectangle;
   PFloatRectangleArray = ^TFloatRectangleArray;
 
-  TRectangleList = class({$ifdef CASTLE_OBJFPC}specialize{$endif} TStructList<TRectangle>)
+  TRectangleList = class({$ifdef FPC}specialize{$endif} TStructList<TRectangle>)
   public
     { Index of the first rectangle that contains point (X, Y).
       Returns -1 if not found. }
@@ -464,7 +464,7 @@ type
     function FindRectangle(const Point: TVector2): Integer; overload;
   end;
 
-  TFloatRectangleList = {$ifdef CASTLE_OBJFPC}specialize{$endif} TStructList<TFloatRectangle>;
+  TFloatRectangleList = {$ifdef FPC}specialize{$endif} TStructList<TFloatRectangle>;
 
 function Rectangle(const Left, Bottom: Integer;
   const Width, Height: Cardinal): TRectangle; overload;
@@ -493,8 +493,8 @@ end;
 function Rectangle(const LeftBottom: TVector2Integer;
   const Width, Height: Cardinal): TRectangle;
 begin
-  Result.Left := LeftBottom.Data[0];
-  Result.Bottom := LeftBottom.Data[1];
+  Result.Left := LeftBottom.X;
+  Result.Bottom := LeftBottom.Y;
   Result.Width := Width;
   Result.Height := Height;
 end;
@@ -517,14 +517,14 @@ end;
 
 function TRectangle.Contains(const Point: TVector2): boolean;
 begin
-  Result := (Point.Data[0] >= Left  ) and (Point.Data[0] < Left   + Integer(Width)) and
-            (Point.Data[1] >= Bottom) and (Point.Data[1] < Bottom + Integer(Height));
+  Result := (Point.X >= Left  ) and (Point.X < Left   + Integer(Width)) and
+            (Point.Y >= Bottom) and (Point.Y < Bottom + Integer(Height));
 end;
 
 function TRectangle.Contains(const Point: TVector2Integer): boolean;
 begin
-  Result := (Point.Data[0] >= Left  ) and (Point.Data[0] < Left   + Integer(Width)) and
-            (Point.Data[1] >= Bottom) and (Point.Data[1] < Bottom + Integer(Height));
+  Result := (Point.X >= Left  ) and (Point.X < Left   + Integer(Width)) and
+            (Point.Y >= Bottom) and (Point.Y < Bottom + Integer(Height));
 end;
 
 function TRectangle.CenterInside(const W, H: Cardinal): TRectangle;
@@ -679,14 +679,14 @@ end;
 
 function TRectangle.GetLeftBottom: TVector2Integer;
 begin
-  Result.Data[0] := Left;
-  Result.Data[1] := Bottom;
+  Result.X := Left;
+  Result.Y := Bottom;
 end;
 
 procedure TRectangle.SetLeftBottom(const Value: TVector2Integer);
 begin
-  Left := Value.Data[0];
-  Bottom := Value.Data[1];
+  Left := Value.X;
+  Bottom := Value.Y;
 end;
 
 function TRectangle.ClampX(const X: Integer): Integer;
@@ -753,7 +753,10 @@ begin
   if Width > 0 then
   begin
     Result.Width  := Round(Width  * Factor);
-    Result.Left   := Left   + (Width  - Result.Width ) div 2;
+    if Width > Result.Width then
+      Result.Left   := Left   + (Width  - Result.Width ) div 2
+    else
+      Result.Left   := Left   - (Result.Width - Width) div 2
   end else
   begin
     Result.Width  := Width;
@@ -763,7 +766,10 @@ begin
   if Height > 0 then
   begin
     Result.Height := Round(Height * Factor);
-    Result.Bottom := Bottom + (Height - Result.Height) div 2;
+    if Height > Result.Height then
+      Result.Bottom := Bottom + (Height - Result.Height) div 2
+    else
+      Result.Bottom := Bottom - (Result.Height - Height) div 2;
   end else
   begin
     Result.Height := Height;
@@ -838,13 +844,17 @@ begin
   Result := OtherRect.Left + X;
   case ThisPosition of
     hpLeft  : ;
-    hpMiddle: Result := Result - Width div 2;
-    hpRight : Result := Result - Width;
+    { Integer cast to avoid Arithmetic overflow (FPC 3.3.1-9828-g983fbff871 [2022/01/02], Linux/x86_64),
+      testcase in TTestRectangles.TestAlign. }
+    hpMiddle: Result := Result - Integer(Width) div 2;
+    hpRight : Result := Result - Integer(Width);
   end;
   case OtherPosition of
     hpLeft  : ;
-    hpMiddle: Result := Result + OtherRect.Width div 2;
-    hpRight : Result := Result + OtherRect.Width;
+    { Integer cast to avoid Range check error (FPC 3.3.1-9828-g983fbff871 [2022/01/02], Linux/x86_64),
+      testcase in TTestRectangles.TestAlign. }
+    hpMiddle: Result := Result + Integer(OtherRect.Width) div 2;
+    hpRight : Result := Result + Integer(OtherRect.Width);
   end;
 end;
 
@@ -857,13 +867,13 @@ begin
   Result := OtherRect.Bottom + Y;
   case ThisPosition of
     vpBottom: ;
-    vpMiddle: Result := Result - Height div 2;
-    vpTop   : Result := Result - Height;
+    vpMiddle: Result := Result - Integer(Height) div 2;
+    vpTop   : Result := Result - Integer(Height);
   end;
   case OtherPosition of
     vpBottom: ;
-    vpMiddle: Result := Result + OtherRect.Height div 2;
-    vpTop   : Result := Result + OtherRect.Height;
+    vpMiddle: Result := Result + Integer(OtherRect.Height) div 2;
+    vpTop   : Result := Result + Integer(OtherRect.Height);
   end;
 end;
 
@@ -893,8 +903,8 @@ end;
 
 function TRectangle.Translate(const V: TVector2Integer): TRectangle;
 begin
-  Result.Left := Left + V.Data[0];
-  Result.Bottom := Bottom + V.Data[1];
+  Result.Left := Left + V.X;
+  Result.Bottom := Bottom + V.Y;
   Result.Width := Width;
   Result.Height := Height;
 end;
@@ -984,8 +994,8 @@ end;
 function FloatRectangle(const LeftBottom: TVector2;
   const Width, Height: Single): TFloatRectangle;
 begin
-  Result.Left   := LeftBottom.Data[0];
-  Result.Bottom := LeftBottom.Data[1];
+  Result.Left   := LeftBottom.X;
+  Result.Bottom := LeftBottom.Y;
   Result.Width  := Width;
   Result.Height := Height;
 end;
@@ -1010,8 +1020,8 @@ end;
 
 function TFloatRectangle.Contains(const Point: TVector2): boolean;
 begin
-  Result := (Point.Data[0] >= Left  ) and (Point.Data[0] <= Left   + Width) and
-            (Point.Data[1] >= Bottom) and (Point.Data[1] <= Bottom + Height);
+  Result := (Point.X >= Left  ) and (Point.X <= Left   + Width) and
+            (Point.Y >= Bottom) and (Point.Y <= Bottom + Height);
 end;
 
 function TFloatRectangle.Contains(const R: TFloatRectangle): boolean;
@@ -1029,26 +1039,26 @@ end;
 
 function TFloatRectangle.GetLeftBottom: TVector2;
 begin
-  Result.Data[0] := Left;
-  Result.Data[1] := Bottom;
+  Result.X := Left;
+  Result.Y := Bottom;
 end;
 
 procedure TFloatRectangle.SetLeftBottom(const Value: TVector2);
 begin
-  Left := Value.Data[0];
-  Bottom := Value.Data[1];
+  Left := Value.X;
+  Bottom := Value.Y;
 end;
 
 function TFloatRectangle.GetSize: TVector2;
 begin
-  Result.Data[0] := Width;
-  Result.Data[1] := Height;
+  Result.X := Width;
+  Result.Y := Height;
 end;
 
 procedure TFloatRectangle.SetSize(const Value: TVector2);
 begin
-  Width := Value.Data[0];
-  Height := Value.Data[1];
+  Width := Value.X;
+  Height := Value.Y;
 end;
 
 function TFloatRectangle.Center: TVector2;
@@ -1277,8 +1287,8 @@ end;
 
 function TFloatRectangle.Translate(const V: TVector2): TFloatRectangle;
 begin
-  Result.Left := Left + V.Data[0];
-  Result.Bottom := Bottom + V.Data[1];
+  Result.Left := Left + V.X;
+  Result.Bottom := Bottom + V.Y;
   Result.Width := Width;
   Result.Height := Height;
 end;
@@ -1306,41 +1316,41 @@ begin
   ARight := Left + Width;
   ATop   := Bottom + Height;
 
-  if DiscCenter.Data[0] < Left then
+  if DiscCenter.X < Left then
   begin
     InsideX := false;
     ClosestCornerX := Left;
-    if Left - DiscCenter.Data[0] > Radius then Exit(false);
+    if Left - DiscCenter.X > Radius then Exit(false);
   end else
-  if DiscCenter.Data[0] > ARight then
+  if DiscCenter.X > ARight then
   begin
     InsideX := false;
     ClosestCornerX := ARight;
-    if DiscCenter.Data[0] - ARight > Radius then Exit(false);
+    if DiscCenter.X - ARight > Radius then Exit(false);
   end else
   begin
     InsideX := true;
-    if DiscCenter.Data[0] < (Left + ARight) / 2 then
+    if DiscCenter.X < (Left + ARight) / 2 then
       ClosestCornerX := Left
     else
       ClosestCornerX := ARight;
   end;
 
-  if DiscCenter.Data[1] < Bottom then
+  if DiscCenter.Y < Bottom then
   begin
     InsideY := false;
     ClosestCornerY := Bottom;
-    if Bottom - DiscCenter.Data[1] > Radius then Exit(false);
+    if Bottom - DiscCenter.Y > Radius then Exit(false);
   end else
-  if DiscCenter.Data[1] > ATop then
+  if DiscCenter.Y > ATop then
   begin
     InsideY := false;
     ClosestCornerY := ATop;
-    if DiscCenter.Data[1] - ATop > Radius then Exit(false);
+    if DiscCenter.Y - ATop > Radius then Exit(false);
   end else
   begin
     InsideY := true;
-    if DiscCenter.Data[1] < (Bottom + ATop) / 2 then
+    if DiscCenter.Y < (Bottom + ATop) / 2 then
       ClosestCornerY := Bottom
     else
       ClosestCornerY := ATop;
@@ -1356,8 +1366,8 @@ begin
     Exit(true);
 
   Result :=
-    Sqr(DiscCenter.Data[0] - ClosestCornerX) +
-    Sqr(DiscCenter.Data[1] - ClosestCornerY) <=
+    Sqr(DiscCenter.X - ClosestCornerX) +
+    Sqr(DiscCenter.Y - ClosestCornerY) <=
     Sqr(Radius);
 end;
 
@@ -1450,34 +1460,34 @@ function TFloatRectangle.Include(const P: TVector2): TFloatRectangle;
 begin
   if IsEmpty then
   begin
-    Result.Left := P.Data[0];
-    Result.Bottom := P.Data[1];
+    Result.Left := P.X;
+    Result.Bottom := P.Y;
     Result.Width := 0;
     Result.Height := 0;
   end else
   begin
-    if P.Data[0] < Left then
+    if P.X < Left then
     begin
-      Result.Left := P.Data[0];
-      Result.Width := (Left - P.Data[0]) + Width;
+      Result.Left := P.X;
+      Result.Width := (Left - P.X) + Width;
     end else
     begin
       Result.Left := Left;
-      if P.Data[0] > Right then
-        Result.Width := Width + P.Data[0] - Right
+      if P.X > Right then
+        Result.Width := Width + P.X - Right
       else
         Result.Width := Width;
     end;
 
-    if P.Data[1] < Bottom then
+    if P.Y < Bottom then
     begin
-      Result.Bottom := P.Data[1];
-      Result.Height := (Bottom - P.Data[1]) + Height;
+      Result.Bottom := P.Y;
+      Result.Height := (Bottom - P.Y) + Height;
     end else
     begin
       Result.Bottom := Bottom;
-      if P.Data[1] > Top then
-        Result.Height := Height + P.Data[1] - Top
+      if P.Y > Top then
+        Result.Height := Height + P.Y - Top
       else
         Result.Height := Height;
     end;
@@ -1495,10 +1505,10 @@ end;
 
 class function TFloatRectangle.FromX3DVector(const V: TVector4): TFloatRectangle;
 begin
-  Result.Left   := V.Data[0];
-  Result.Bottom := V.Data[1];
-  Result.Width  := V.Data[2] - V.Data[0];
-  Result.Height := V.Data[3] - V.Data[1];
+  Result.Left   := V.X;
+  Result.Bottom := V.Y;
+  Result.Width  := V.Z - V.X;
+  Result.Height := V.W - V.Y;
 end;
 
 function TFloatRectangle.Round: TRectangle;

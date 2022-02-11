@@ -1,5 +1,5 @@
 {
-  Copyright 2014-2018 Michalis Kamburelis.
+  Copyright 2014-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -22,12 +22,14 @@ interface
 
 uses Classes,
   CastleUtils, CastleStringUtils,
-  ToolArchitectures, ToolCompile, ToolPackage, ToolProject;
+  ToolArchitectures, ToolCompile, ToolPackageFormat, ToolProject,
+  ToolManifest;
 
 { Compile (for all possible Android CPUs) Android unit or library.
   When Project <> nil, we assume we compile libraries (one of more .so files),
   and their final names must match Project.AndroidLibraryFile(CPU). }
-procedure CompileAndroid(const Project: TCastleProject;
+procedure CompileAndroid(const Compiler: TCompiler;
+  const Project: TCastleProject;
   const Mode: TCompilationMode; const WorkingDirectory, CompileFile: string;
   const SearchPaths, LibraryPaths, ExtraOptions: TStrings);
 
@@ -42,7 +44,9 @@ procedure PackageAndroid(const Project: TCastleProject;
   const OS: TOS; const CPUS: TCPUS; const SuggestedPackageMode: TCompilationMode;
   const PackageFormat: TPackageFormatNoDefault; const PackageNameIncludeVersion: Boolean);
 
-procedure InstallAndroid(const Name, QualifiedName, OutputPath: string);
+procedure InstallAndroid(const Project: TCastleProject;
+  const PackageMode: TCompilationMode;
+  const PackageFormat: TPackageFormatNoDefault; const PackageNameIncludeVersion: Boolean);
 
 procedure RunAndroid(const Project: TCastleProject);
 
@@ -52,7 +56,7 @@ uses SysUtils, DOM, XMLWrite,
   // TODO: Should not be needed after https://github.com/castle-engine/castle-engine/pull/302/commits/888690fdac181b6f140a71fd0d5ac20a7d7b59e6
   {$IFDEF UNIX}BaseUnix, {$ENDIF}
   CastleURIUtils, CastleXMLUtils, CastleLog, CastleFilesUtils, CastleImages,
-  ToolEmbeddedImages, ToolFPCVersion, ToolCommonUtils, ToolUtils, ToolManifest,
+  ToolEmbeddedImages, ToolFPCVersion, ToolCommonUtils, ToolUtils,
   ToolServicesOperations;
 
 var
@@ -71,7 +75,8 @@ begin
   Result := DetectAndroidCPUSCached;
 end;
 
-procedure CompileAndroid(const Project: TCastleProject;
+procedure CompileAndroid(const Compiler: TCompiler;
+  const Project: TCastleProject;
   const Mode: TCompilationMode; const WorkingDirectory, CompileFile: string;
   const SearchPaths, LibraryPaths, ExtraOptions: TStrings);
 var
@@ -79,7 +84,7 @@ var
 begin
   for CPU in DetectAndroidCPUS do
   begin
-    Compile(Android, CPU, { Plugin } false,
+    Compile(Compiler, Android, CPU, { Plugin } false,
       Mode, WorkingDirectory, CompileFile, SearchPaths, LibraryPaths, ExtraOptions);
     if Project <> nil then
     begin
@@ -137,13 +142,16 @@ function AdbExe(const Required: boolean = true): string;
 const
   ExeName = 'adb';
   BundleName = 'SDK';
-  EnvVarName = 'ANDROID_HOME';
+  EnvVarName1 = 'ANDROID_SDK_ROOT';
+  EnvVarName2 = 'ANDROID_HOME';
 var
   Env: string;
 begin
   Result := '';
-  { try to find in $ANDROID_HOME }
-  Env := GetEnvironmentVariable(EnvVarName);
+  { try to find in $ANDROID_SDK_ROOT or (deprecated) $ANDROID_HOME }
+  Env := GetEnvironmentVariable(EnvVarName1);
+  if Env = '' then
+    GetEnvironmentVariable(EnvVarName2);
   if Env <> '' then
   begin
     Result := AddExeExtension(InclPathDelim(Env) + 'platform-tools' + PathDelim + ExeName);
@@ -152,7 +160,26 @@ begin
   end;
   { try to find on $PATH }
   if Result = '' then
-    Result := FinishExeSearch(ExeName, BundleName, EnvVarName, Required);
+    Result := FinishExeSearch(ExeName, BundleName, EnvVarName1, Required);
+end;
+
+function AndroidPackageFile(const Project: TCastleProject;
+  const Mode: TCompilationMode;
+  const PackageFormat: TPackageFormatNoDefault;
+  const PackageNameIncludeVersion: Boolean): String;
+begin
+  Result := Project.Name;
+  if PackageNameIncludeVersion and (Project.Version.DisplayValue <> '') then
+    Result += '-' + Project.Version.DisplayValue;
+  Result += '-android' + '-' + PackageModeToName[Mode];
+  case PackageFormat of
+    pfAndroidApk:
+      Result += '.apk';
+    pfAndroidAppBundle:
+      Result += '.aab';
+    else
+      raise Exception.Create('Unexpected PackageFormat in for Android: ' + PackageFormatToString(PackageFormat));
+  end;
 end;
 
 procedure PackageAndroid(const Project: TCastleProject;
@@ -246,6 +273,9 @@ var
     if (depFreeType in Project.Dependencies) and
        not Project.AndroidServices.HasService('freetype') then
       ExtractService('freetype');
+    if (depPng in Project.Dependencies) and
+       not Project.AndroidServices.HasService('png') then
+      ExtractService('png');
     if (depHttps in Project.Dependencies) and
        not Project.AndroidServices.HasService('download_urls') then
       ExtractService('download_urls');
@@ -383,7 +413,17 @@ var
 
   procedure CalculateSigningProperties(var PackageMode: TCompilationMode);
   const
-    WWW = 'https://github.com/castle-engine/castle-engine/wiki/Android';
+    SigningPropertiesFile = 'AndroidSigningProperties.txt';
+    WWW = 'https://castle-engine.io/android_faq#_signing_a_release_apk';
+    MissingSigningSuffix =
+      '  See ' + WWW + ' for documentation how to create and use keys to sign release Android APK / AAB.' + NL +
+      '  Falling back to creating debug apk.';
+    MissingSigningInfo =
+      'Key information (key.store, key.alias, key.store.password, key.alias.password) to sign release Android package not found inside "' + SigningPropertiesFile + '" file.' + NL +
+      MissingSigningSuffix;
+    MissingSigningFile =
+      'Information about the keys to sign release Android package not found, because "' + SigningPropertiesFile + '" file does not exist.' + NL +
+      MissingSigningSuffix;
 
     procedure LoadSigningProperties(const FileName: string);
     var
@@ -398,7 +438,7 @@ var
             (S.IndexOfName('key.store.password') = -1) or
             (S.IndexOfName('key.alias.password') = -1)) then
         begin
-          WritelnWarning('Android', 'Key information (key.store, key.alias, key.store.password, key.alias.password) to sign release Android package not found inside "' + FileName + '" file. See ' + WWW + ' for documentation how to create and use keys to sign release Android apk. Falling back to creating debug apk.');
+          WritelnWarning('Android', MissingSigningInfo);
           PackageMode := cmDebug;
         end;
         if PackageMode <> cmDebug then
@@ -443,26 +483,18 @@ var
       finally FreeAndNil(S) end;
     end;
 
-  const
-    SourceAntPropertiesOld = 'AndroidAntProperties.txt';
-    SourceAntProperties = 'AndroidSigningProperties.txt';
   begin
     KeyStore := '';
     KeyAlias := '';
     KeyStorePassword := '';
     KeyAliasPassword := '';
-    if RegularFileExists(Project.Path + SourceAntProperties) then
+    if RegularFileExists(Project.Path + SigningPropertiesFile) then
     begin
-      LoadSigningProperties(Project.Path + SourceAntProperties);
-    end else
-    if RegularFileExists(Project.Path + SourceAntPropertiesOld) then
-    begin
-      LoadSigningProperties(Project.Path + SourceAntPropertiesOld);
-      WritelnWarning('Deprecated', 'Using deprecated configuration file name "' + SourceAntPropertiesOld + '". Rename it to "' + SourceAntProperties + '".');
+      LoadSigningProperties(Project.Path + SigningPropertiesFile);
     end else
     if PackageMode <> cmDebug then
     begin
-      WritelnWarning('Android', 'Information about the keys to sign release Android package not found, because "' + SourceAntProperties + '" file does not exist. See ' + WWW + ' for documentation how to create and use keys to sign release Android apk. Falling back to creating debug apk.');
+      WritelnWarning('Android', MissingSigningFile);
       PackageMode := cmDebug;
     end;
   end;
@@ -558,14 +590,10 @@ begin
   GenerateLibrary;
   RunGradle(PackageMode);
 
-  PackageName := Project.Name;
-  if PackageNameIncludeVersion and (Project.Version.DisplayValue <> '') then
-    PackageName += '-' + Project.Version.DisplayValue;
-  PackageName += '-android' + '-' + PackageModeToName[PackageMode];
+  PackageName := AndroidPackageFile(Project, PackageMode, PackageFormat, PackageNameIncludeVersion);
   case PackageFormat of
     pfAndroidApk:
       begin
-        PackageName += '.apk';
         CheckRenameFile(AndroidProjectPath + 'app' + PathDelim +
           'build' +  PathDelim +
           'outputs' + PathDelim +
@@ -576,7 +604,6 @@ begin
       end;
     pfAndroidAppBundle:
       begin
-        PackageName += '.aab';
         CheckRenameFile(AndroidProjectPath + 'app' + PathDelim +
           'build' +  PathDelim +
           'outputs' + PathDelim +
@@ -584,10 +611,7 @@ begin
           PackageModeToName[PackageMode] + PathDelim +
           'app-' + PackageModeToName[PackageMode] + '.aab',
           Project.OutputPath + PackageName);
-        {$IFDEF UNIX}
-        // TODO: Should be replaced by DoMakeExecutable from https://github.com/castle-engine/castle-engine/pull/302/commits/888690fdac181b6f140a71fd0d5ac20a7d7b59e6
-        Writeln('FpChmod = ' + FpChmod(Project.OutputPath + PackageName, &777).ToString);
-        {$ENDIF}
+        DoMakeExecutable(Project.OutputPath + PackageName);
       end;
     else
       raise Exception.Create('Unexpected PackageFormat in PackageAndroid: ' + PackageFormatToString(PackageFormat));
@@ -596,28 +620,23 @@ begin
   Writeln('Build ' + PackageName);
 end;
 
-procedure InstallAndroid(const Name, QualifiedName, OutputPath: string);
+procedure InstallAndroid(const Project: TCastleProject;
+  const PackageMode: TCompilationMode;
+  const PackageFormat: TPackageFormatNoDefault; const PackageNameIncludeVersion: Boolean);
 var
-  ApkDebugName, ApkReleaseName, ApkName: string;
+  PackageName: string;
 begin
-  ApkReleaseName := CombinePaths(OutputPath, Name + '-' + PackageModeToName[cmRelease] + '.apk');
-  ApkDebugName   := CombinePaths(OutputPath, Name + '-' + PackageModeToName[cmDebug  ] + '.apk');
-  if RegularFileExists(ApkDebugName) and RegularFileExists(ApkReleaseName) then
-    raise Exception.CreateFmt('Both debug and release apk files exist in this directory: "%s" and "%s". We do not know which to install --- resigning. Simply rename or delete one of the apk files.',
-      [ApkDebugName, ApkReleaseName]);
-  if RegularFileExists(ApkDebugName) then
-    ApkName := ApkDebugName else
-  if RegularFileExists(ApkReleaseName) then
-    ApkName := ApkReleaseName else
-    raise Exception.CreateFmt('No Android apk found in this directory: "%s" or "%s"',
-      [ApkDebugName, ApkReleaseName]);
+  PackageName := AndroidPackageFile(Project, PackageMode, PackageFormat, PackageNameIncludeVersion);
+  if not RegularFileExists(PackageName) then
+    raise Exception.CreateFmt('No Android package found: "%s"', [PackageName]);
 
   { Uninstall and then install, instead of calling "install -r",
     to avoid failures because apk signed with different keys (debug vs release). }
 
-  Writeln('Reinstalling application identified as "' + QualifiedName + '".');
-  Writeln('If this fails, an often cause is that a previous development version of the application, signed with a different key, remains on the device. In this case uninstall it first (note that it will clear your UserConfig data, unless you use -k) by "adb uninstall ' + QualifiedName + '"');
-  RunCommandSimple(AdbExe, ['install', '-r', ApkName]);
+  Writeln('Reinstalling application identified as "' + Project.QualifiedName + '".');
+  Writeln('If this fails, an often cause is that a previous development version of the application, signed with a different key, remains on the device. In this case uninstall it first (note that it will clear your UserConfig data, unless you use -k) by "adb uninstall ' + Project.QualifiedName + '"');
+  Flush(Output); // don't mix output with adb output
+  RunCommandSimple(AdbExe, ['install', '-r', PackageName]);
   Writeln('Install successful.');
 end;
 

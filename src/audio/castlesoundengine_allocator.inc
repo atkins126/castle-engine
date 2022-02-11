@@ -76,12 +76,6 @@
       to never let them be eliminated by other sounds. }
     function AllocateSound(const Priority: Single): TInternalSoundSource;
 
-    { All allocated (not necessarily used) sources.
-      Accessing this is useful only for debugging tasks,
-      in normal circumstances this is internal.
-      This is @nil when ContextOpen was not yet called. }
-    //property AllocatedSources: TInternalSoundSourceList read FAllocatedSources;
-
     { Stop all the sources currently playing. Especially useful since
       you have to stop a source before releasing it's associated buffer. }
     procedure StopAllSources;
@@ -93,7 +87,7 @@
     constructor Create;
     destructor Destroy; override;
 
-    procedure Refresh; deprecated 'this does not do anything now; refreshing is done automatically if you use CastleWindow unit (with TCastleApplication, TCastleWindowBase) or TCastleControlBase; in other cases, you shoud call ApplicationProperties._Update yourself';
+    procedure Refresh; deprecated 'this does not do anything now; refreshing is done automatically if you use CastleWindow unit (with TCastleApplication, TCastleWindow) or TCastleControl; in other cases, you shoud call ApplicationProperties._Update yourself';
 
     { Load and save into the config file sound engine properties.
       For example use with @link(UserConfig) to store sound preferences
@@ -156,6 +150,12 @@
       read FMaxAllocatedSources write SetMaxAllocatedSources
       default DefaultMaxAllocatedSources;
     { @groupEnd }
+
+    { All allocated (not necessarily used) sources.
+      Accessing this is useful only for debugging tasks,
+      in normal circumstances this is internal.
+      This is @nil when ContextOpen was not yet called. }
+    property InternalAllocatedSources: TInternalSoundSourceList read FAllocatedSources;
   end;
 
 {$endif read_interface}
@@ -198,7 +198,7 @@ begin
   for I := 0 to FAllocatedSources.Count - 1 do
     FAllocatedSources[I] := TInternalSoundSource.Create(Backend);
 
-  ApplicationProperties.OnUpdate.Add({$ifdef CASTLE_OBJFPC}@{$endif} Update);
+  ApplicationProperties.OnUpdate.Add({$ifdef FPC}@{$endif} Update);
 end;
 
 procedure TSoundAllocator.ContextCloseCore;
@@ -225,7 +225,7 @@ begin
   end;
 
   if ApplicationProperties(false) <> nil then
-    ApplicationProperties(false).OnUpdate.Remove({$ifdef CASTLE_OBJFPC}@{$endif} Update);
+    ApplicationProperties(false).OnUpdate.Remove({$ifdef FPC}@{$endif} Update);
 end;
 
 function TSoundAllocator.AllocateSound(

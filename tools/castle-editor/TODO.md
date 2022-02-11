@@ -15,7 +15,6 @@ OK if after nearest release:
   castledialogstates_dialog.inc
   castlecontrols_progressbar.inc
   castleonscreenmenu.pas
-  castleinspectorcontrol.pas
   castlenotifications.pas
   castlecontrols_touchcontrol.inc
   castlecontrols_groups.inc
@@ -94,7 +93,6 @@ OK if after nearest release:
         * remove the "separator" lines. The bold lines already separate them nicely?
         * "command finished with status 0" -> "Command finished successfully."
     * show count of warnings/errors if non-zero on tab header, allow to filter by them
-    * Allow to choose platform
     * rerun generate-program each time? (mark them as some *DO NOT MODIFY THIS, THIS IS ONLY FOR LAZARUS* comment)
         Not really OK, in case we open program with hand-crafted program file.
         Maybe only auto-generate in castle-engine-output,
@@ -136,10 +134,6 @@ OK if after nearest release:
         to allow our dialogs to replace URL with castle-data:/ nicely.
     * saving TCastleColorPersistent to LFM for now doesn't work?
         maybe ignore, we will save TCastleControl to JSON?
-
-* setting PrimitiveGeometry to pgSphere,
-  clears URL,
-  but it is not visible in object inspector immediately (it is not redrawn, it seems?)
 
 * at scene loading show something "wait, loading..."
 

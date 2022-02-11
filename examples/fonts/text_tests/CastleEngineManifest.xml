@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <project name="text_tests"
-  standalone_source="text_tests_standalone.lpr"
+  standalone_source="text_tests_standalone.dpr"
   game_units="GameInitialize"
-  qualified_name="com.mycompany.texttests"
+  qualified_name="io.castleengine.text.tests"
   caption="Demo of text and font rendering"
 >
   <compiler_options>

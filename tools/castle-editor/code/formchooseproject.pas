@@ -1,5 +1,5 @@
 {
-  Copyright 2018-2018 Michalis Kamburelis.
+  Copyright 2018-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -28,33 +28,36 @@ uses
 type
   { Choose project (new or existing). }
   TChooseProjectForm = class(TForm)
-    ButtonPreferences: TBitBtn;
-    ButtonOpenRecent: TBitBtn;
-    ButtonNew: TBitBtn;
     ButtonOpen: TBitBtn;
+    ButtonOpenRecent: TBitBtn;
+    ButtonOpenExample: TBitBtn;
+    ButtonNew: TBitBtn;
+    ButtonPreferences: TBitBtn;
+    ButtonSupportUs: TBitBtn;
+    GroupBoxOpen: TGroupBox;
     Image1: TImage;
     Label1: TLabel;
     OpenProject: TCastleOpenDialog;
     ImageLogo: TImage;
     LabelTitle: TLabel;
-    PanelWarningFpcLazarus: TPanel;
+    PanelBottom: TPanel;
+    PanelWarningMissingCompiler: TPanel;
     PopupMenuRecentProjects: TPopupMenu;
+    procedure ButtonOpenExampleClick(Sender: TObject);
     procedure ButtonPreferencesClick(Sender: TObject);
     procedure ButtonNewClick(Sender: TObject);
     procedure ButtonOpenClick(Sender: TObject);
     procedure ButtonOpenRecentClick(Sender: TObject);
+    procedure ButtonSupportUsClick(Sender: TObject);
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure FormShow(Sender: TObject);
-  protected
-    procedure Show;
-    procedure Hide;
   private
     RecentProjects: TCastleRecentFiles;
     CommandLineHandled: Boolean;
     procedure MenuItemRecentClick(Sender: TObject);
     procedure OpenProjectFromCommandLine;
-    procedure UpdateWarningFpcLazarus;
+    procedure UpdateWarningMissingCompiler;
     { Open ProjectForm.
       ManifestUrl may be absolute or relative here. }
     procedure ProjectOpen(ManifestUrl: string);
@@ -69,43 +72,13 @@ implementation
 
 {$R *.lfm}
 
-uses CastleConfig, CastleLCLUtils, CastleURIUtils, CastleUtils,
+uses CastleConfig, CastleLCLUtils, CastleURIUtils, CastleUtils, CastleOpenDocument,
   CastleFilesUtils, CastleParameters, CastleLog, CastleStringUtils,
   ProjectUtils, EditorUtils, FormNewProject, FormPreferences,
-  ToolCompilerInfo, ToolFpcVersion,
+  ToolCompilerInfo, ToolFpcVersion, ToolManifest, ToolCommonUtils,
   FormProject, FormNewUnit;
 
 { TChooseProjectForm ------------------------------------------------------------- }
-
-procedure TChooseProjectForm.Show;
-begin
-  { Special Show/Hide on Windows, to fix taskbar button visible on Windows
-    (to keep CGE on taskbar, once project is chosen).
-
-    Comment out, this is not a good solution: while it keeps CGE in taskbar,
-    but it also prevents the ChooseProjectForm from being hidden,
-    for Lazarus 2.0.8 and 2.0.10.
-    It is even more important when running editor with project on command-line
-    (which also happens when you rebuild editor with project-specific components),
-    then the ChooseProjectForm may be on top on ProjectForm after start.
-
-    TODO: how to fix CGE on taskbar on Windows correctly? }
-
-  //{$ifdef MSWINDOWS}
-  //Application.ShowMainForm := True;
-  //{$else}
-  inherited Show;
-  //{$endif}
-end;
-
-procedure TChooseProjectForm.Hide;
-begin
-  //{$ifdef MSWINDOWS}
-  //Application.ShowMainForm := False;
-  //{$else}
-  inherited Hide;
-  //{$endif}
-end;
 
 procedure TChooseProjectForm.ProjectOpen(ManifestUrl: string);
 begin
@@ -212,7 +185,18 @@ end;
 procedure TChooseProjectForm.ButtonPreferencesClick(Sender: TObject);
 begin
   PreferencesForm.ShowModal;
-  UpdateWarningFpcLazarus;
+  UpdateWarningMissingCompiler;
+end;
+
+procedure TChooseProjectForm.ButtonOpenExampleClick(Sender: TObject);
+begin
+  if CastleEnginePath <> '' then
+  begin
+    OpenProject.FileName := CastleEnginePath + 'examples' + PathDelim;
+  end else
+    WritelnWarning('Cannot find CGE directory');
+
+  ButtonOpenClick(nil);
 end;
 
 procedure TChooseProjectForm.ButtonOpenRecentClick(Sender: TObject);
@@ -248,6 +232,11 @@ begin
   PopupMenuRecentProjects.Popup;
 end;
 
+procedure TChooseProjectForm.ButtonSupportUsClick(Sender: TObject);
+begin
+  OpenURL('https://patreon.com/castleengine/');
+end;
+
 procedure TChooseProjectForm.FormCreate(Sender: TObject);
 
   procedure ConfigLoad;
@@ -259,6 +248,7 @@ procedure TChooseProjectForm.FormCreate(Sender: TObject);
     CodeEditorCommandProject := UserConfig.GetValue('code_editor/command_project', '');
     MuteOnRun := UserConfig.GetValue('sound/mute_on_run', DefaultMuteOnRun);
     EditorVolume := UserConfig.GetFloat('sound/editor_volume', DefaultEditorVolume);
+    Compiler := StringToCompiler(UserConfig.GetValue('compiler', CompilerToString(DefaultCompiler)));
     SoundEngineSetVolume;
   end;
 
@@ -281,6 +271,7 @@ procedure TChooseProjectForm.FormDestroy(Sender: TObject);
     UserConfig.SetDeleteValue('code_editor/command_project', CodeEditorCommandProject, '');
     UserConfig.SetDeleteValue('sound/mute_on_run', MuteOnRun, DefaultMuteOnRun);
     UserConfig.SetDeleteFloat('sound/editor_volume', EditorVolume, DefaultEditorVolume);
+    UserConfig.SetDeleteValue('compiler', CompilerToString(Compiler), CompilerToString(DefaultCompiler));
   end;
 
 begin
@@ -293,30 +284,35 @@ procedure TChooseProjectForm.FormShow(Sender: TObject);
 begin
   ButtonOpenRecent.Enabled := RecentProjects.URLs.Count <> 0;
   OpenProjectFromCommandLine;
-  UpdateWarningFpcLazarus;
+  UpdateWarningMissingCompiler;
 end;
 
-procedure TChooseProjectForm.UpdateWarningFpcLazarus;
+procedure TChooseProjectForm.UpdateWarningMissingCompiler;
 
-  function FpcOrLazarusMissing: Boolean;
+  function CompilerFound: Boolean;
   begin
-    Result := true;
+    Result := false;
     try
       FindExeFpcCompiler;
       FpcVersion;
-      FindExeLazarusIDE;
-      Result := false;
+      Result := true;
     except
-      { FindExeFpcCompiler or FindExeLazarusIDE exit with EExecutableNotFound,
+      { FindExeFpcCompiler exits with EExecutableNotFound,
         but FpcVersion may fail with any Exception unfortunately
         (it runs external process, and many things can go wrong). }
       on E: Exception do
-        WritelnLog('FPC or Lazarus not detected, or cannot run FPC to get version: ' + ExceptMessage(E));
+      begin
+        WritelnLog('FPC not found, or cannot run FPC to get version: ' + ExceptMessage(E));
+
+        { if FPC failed, try to find Delphi }
+        if FindDelphiPath(false) <> '' then
+          Result := true;
+      end;
     end;
   end;
 
 begin
-  PanelWarningFpcLazarus.Visible := FpcOrLazarusMissing;
+  PanelWarningMissingCompiler.Visible := not CompilerFound;
 end;
 
 procedure TChooseProjectForm.MenuItemRecentClick(Sender: TObject);

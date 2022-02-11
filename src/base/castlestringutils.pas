@@ -1,5 +1,5 @@
 {
-  Copyright 2000-2021 Michalis Kamburelis.
+  Copyright 2000-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -66,9 +66,10 @@ type
     The default CaseSensitive value is @true. }
   TCastleStringList = class(TStringList)
   private
+    { Takes Integer, not TListSize -- in FPC, this is also defined as Integer, not TListSize. }
     procedure SetCount(const Value: Integer);
-    function GetL(const Index: Integer): string;
-    procedure SetL(const Index: Integer; const S: string);
+    function GetL(const Index: TListSize): string;
+    procedure SetL(const Index: TListSize; const S: string);
   {$ifndef FPC}
   protected
     function DoCompareText(const A, B: string): Integer;
@@ -76,6 +77,10 @@ type
   public
     constructor Create;
     property Count: Integer read GetCount write SetCount;
+
+    {$ifndef FPC}
+    procedure AddSubRange(const Source: TStringList; const Index, AddCount: TListSize);
+    {$endif}
 
     { Add strings from Source list.
       Alias for AddStrings, useful for usage with macros,
@@ -88,6 +93,9 @@ type
 
     procedure AssignArray(const A: array of string); deprecated 'use Assign';
     procedure Assign(const A: array of string); {$ifndef FPC} reintroduce; {$endif} overload;
+    {$ifndef FPC}
+    procedure Assign(const Source: TStringList); reintroduce; overload;
+    {$endif}
 
     { Does another string list have equal length and content.
 
@@ -111,7 +119,7 @@ type
       It is defined for consistency -- on some lists, like @link(TSingleList),
       there is an important difference between Equals (compares with some
       epsilon tolerance) and PerfectlyEquals. }
-    function PerfectlyEquals(SecondValue: TObject): boolean;
+    function PerfectlyEquals(const SecondValue: TStringList): boolean;
 
     { Reverse the order of items on the array. }
     procedure Reverse;
@@ -119,13 +127,13 @@ type
     { Access strings. This is exactly equivalent to just using standard
       TStringList.Strings property, and is useful only for implementing macros
       that work for both TCastleStringList and TStructList. }
-    property L[const Index: Integer]: string read GetL write SetL;
+    property L[const Index: TListSize]: string read GetL write SetL;
   end;
 
   { String-to-string map. Note that in simple cases you can also
     use standard TStringList functionality (see it's properties Names, Values),
     but this is better if your key/values may be multiline. }
-  TStringStringMap = class({$ifdef CASTLE_OBJFPC}specialize{$endif} TDictionary<string, string>)
+  TStringStringMap = class({$ifdef FPC}specialize{$endif} TDictionary<string, string>)
   strict private
     function GetItems(const AKey: string): string;
     procedure SetItems(const AKey: string; const AValue: string);
@@ -391,7 +399,7 @@ function CreateTokens(const s: string;
   @code('foo') and @code('bar').
 
   The splitting is done "strictly", which means that we always return exactly
-  one more part than the occurences of delimiter in the source string.
+  one more part than the occurrences of delimiter in the source string.
 
   In particular, this means that:
   @unorderedList(
@@ -943,6 +951,16 @@ function CharSetToStr(const SetVariable: TSetOfChars): string;
   PChar(S): returns a Pointer(S) with appropriate type cast. }
 function PCharOrNil(const s: string): PChar;
 
+{ PWideCharOrNil simply returns a Pointer(S), you can think of it as a NO-OP.
+  If string is empty, this returns @nil, otherwise it works just like
+  PWideChar(S): returns a Pointer(S) with appropriate type cast. }
+function PWideCharOrNil(const s: WideString): PWideChar;
+
+{ PAnsiCharOrNil simply returns a Pointer(S), you can think of it as a NO-OP.
+  If string is empty, this returns @nil, otherwise it works just like
+  PAnsiChar(S): returns a Pointer(S) with appropriate type cast. }
+function PAnsiCharOrNil(const s: AnsiString): PAnsiChar;
+
 { Replace any number of consecutive whitespace (including newlines)
   with a single whitespace. This is nice when you have a string
   (possibly multiline) supplied by user, and you want to use this
@@ -967,6 +985,13 @@ procedure SCheckChars(const S: string; const ValidChars: TSetOfChars;
 function TrimEndingNewline(const S: String): String;
 
 function SizeToStr(const Value: Int64): String;
+
+{ Convert String to UTF-16 (UnicodeString).
+  On Delphi (more generally: on compilers where String is already UnicodeString, which is UTF-16),
+  this does nothing.
+  On FPC (more generally: on compilers where String is AnsiString with UTF-8 encoding),
+  this converts UTF-8 into UTF-16 UnicodeString. }
+function StringToUtf16(const Src: String): UnicodeString; inline;
 
 const
   { }
@@ -1047,7 +1072,7 @@ end;
 
 procedure TCastleStringList.SetCount(const Value: Integer);
 var
-  I: Integer;
+  I: TListSize;
 begin
   { Use local variable I, instead of comparing Value = Count for,
     to possibly speed up a little (GetCount is virtual) }
@@ -1061,6 +1086,18 @@ begin
   end;
 end;
 
+{$ifndef FPC}
+procedure TCastleStringList.AddSubRange(const Source: TStringList; const Index, AddCount: TListSize);
+var
+  I: TListSize;
+begin
+  for I := Index to Index + AddCount do
+  begin
+    Add(Source[I]);
+  end;
+end;
+{$endif}
+
 procedure TCastleStringList.AddRange(const Source: TStrings);
 begin
   AddStrings(Source);
@@ -1073,7 +1110,7 @@ end;
 
 procedure TCastleStringList.AddRange(const A: array of string);
 var
-  I: Integer;
+  I: TListSize;
 begin
   for I := 0 to High(A) do
     Add(A[I]);
@@ -1095,9 +1132,16 @@ begin
   AddRange(A);
 end;
 
+{$ifndef FPC}
+procedure TCastleStringList.Assign(const Source: TStringList);
+begin
+  Assign(Source.ToStringArray);
+end;
+{$endif}
+
 procedure TCastleStringList.Reverse;
 var
-  I: Integer;
+  I: TListSize;
 begin
   { Need to specially check for Count = 0 case, since (0-1) div 2 = -1 div 2 = 0
     which means that loop would try invalid Exchange(0, -1). }
@@ -1118,7 +1162,7 @@ end;
 
 function TCastleStringList.Equals(SecondValue: TObject): boolean;
 var
-  I: Integer;
+  I: TListSize;
 begin
   Result := SecondValue is TStrings;
   if Result then
@@ -1136,7 +1180,7 @@ end;
 
 function TCastleStringList.Equals(const A: array of string): boolean;
 var
-  I: Integer;
+  I: TListSize;
 begin
   if High(A) <> Count - 1 then Exit(false);
   for I := 0 to Count - 1 do
@@ -1145,17 +1189,17 @@ begin
   Result := true;
 end;
 
-function TCastleStringList.PerfectlyEquals(SecondValue: TObject): boolean;
+function TCastleStringList.PerfectlyEquals(const SecondValue: TStringList): boolean;
 begin
   Result := Equals(SecondValue);
 end;
 
-function TCastleStringList.GetL(const Index: Integer): string;
+function TCastleStringList.GetL(const Index: TListSize): string;
 begin
   Result := Strings[Index];
 end;
 
-procedure TCastleStringList.SetL(const Index: Integer; const S: string);
+procedure TCastleStringList.SetL(const Index: TListSize; const S: string);
 begin
   Strings[Index] := S;
 end;
@@ -1263,7 +1307,7 @@ begin
   begin
     if CharInSet(S[i], [#10, #13]) then
     begin
-      { niech i obejmie cale zakonczenie linii ktore moze byc 2-znakowe #13#10 lub #10#13 }
+      { let i include whole newline sequence, which may be 2-character #13#10 or #10#13 }
       case s[i] of
         #13 : if SCharIs(s, i+1, #10) then Inc(i);
         #10 : if SCharIs(s, i+1, #13) then Inc(i);
@@ -1287,8 +1331,8 @@ begin
           end;
         if not BrokenSuccess then
         begin
-          { ups ! it can't be broken - no AllowedBreakChars found ! so we break after
-            done+maxcol position. }
+          { line can't be broken - no AllowedBreakChars found.
+            So we break after done+maxcol position. }
           Result := Result + Copy(s, Done+1, MaxCol) + Newline + Indent;
           Done := Done + MaxCol;
         end;
@@ -1329,7 +1373,7 @@ end;
 
 function SReplaceChars(const s: string; const FromChars: TSetOfChars; const ToChar: char): string;
 var
-  I: integer;
+  I: TListSize;
 begin
   Result := s;
   for I := 1 to Length(Result) do
@@ -1339,7 +1383,7 @@ end;
 
 function SReplaceChars(const s: string; const FromChar, ToChar: char): string;
 var
-  i: Integer;
+  i: TListSize;
 begin
   Result := S;
   for i := 1 to Length(Result) do
@@ -1794,6 +1838,9 @@ var datapos, formpos: integer;
       raise EDeformatError.Create('Unexpected end of format : "'+format+'"');
   end;
 
+type
+  { Define it only locally, remember String = AnsiString or UnicodeString. }
+  PString = ^String;
 var
   TypeSpecifier: String;
 begin
@@ -2221,20 +2268,22 @@ begin
 end;
 
 type
+  TRegExprString = {$if defined(FPC) and (FPC_FULLVERSION >= 30300)} UnicodeString {$else} String {$endif};
+
   TRegExprCounter = class
   private
     Index: Integer;
     ReplacementsDone: Cardinal;
     function ReplaceCallback(
-      {$ifdef FPC} ARegExpr: TRegExpr {$else} const Match: TMatch {$endif}): string;
+      {$ifdef FPC} ARegExpr: TRegExpr {$else} const Match: TMatch {$endif}): TRegExprString;
   end;
 
 function TRegExprCounter.ReplaceCallback(
-  {$ifdef FPC} ARegExpr: TRegExpr {$else} const Match: TMatch {$endif}): string;
+  {$ifdef FPC} ARegExpr: TRegExpr {$else} const Match: TMatch {$endif}): TRegExprString;
 var
-  MatchedText: string;
+  MatchedText: TRegExprString;
 begin
-  MatchedText := {$ifdef FPC} ARegExpr.Match[1] {$else} Match.Value {$endif};
+  MatchedText := {$ifdef FPC} ARegExpr.Match[1] {$else} Match.Groups[1].Value {$endif};
   Result := IntToStrZPad(Index, StrToInt(MatchedText));
   Inc(ReplacementsDone);
 end;
@@ -2287,7 +2336,7 @@ begin
     try
       C.Index := Index;
       {$ifdef FPC}
-      Result := R.Replace(NamePattern, {$ifdef CASTLE_OBJFPC}@{$endif} C.ReplaceCallback);
+      Result := R.Replace(NamePattern, {$ifdef FPC}@{$endif} C.ReplaceCallback);
       {$else}
         // Fix for delphi < Tokio, needs an extra Variable for the call
          P := C.ReplaceCallback;
@@ -2539,6 +2588,12 @@ end;
 function PCharOrNil(const s: string): PChar;
 begin if s = '' then result := nil else result := PChar(s); end;
 
+function PWideCharOrNil(const s: WideString): PWideChar;
+begin if s = '' then result := nil else result := PWideChar(s); end;
+
+function PAnsiCharOrNil(const s: AnsiString): PAnsiChar;
+begin if s = '' then result := nil else result := PAnsiChar(s); end;
+
 function SCompressWhiteSpace(const S: string): string;
 var
   ResultPos: Integer; { this is always next free result position }
@@ -2643,6 +2698,11 @@ begin
 
   // too verbose
   //Result += Format(' (%d bytes)', [Value]);
+end;
+
+function StringToUtf16(const Src: String): UnicodeString;
+begin
+  Result := {$if SizeOf(char) = 2} Src {$else} UTF8Decode(Src) {$ifend};
 end;
 
 end.

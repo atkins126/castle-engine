@@ -1,7 +1,7 @@
 {%MainUnit castlerenderoptions.pas}
 
 {
-  Copyright 2002-2020 Michalis Kamburelis.
+  Copyright 2002-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -129,7 +129,7 @@ type
       { Default value of @link(TCastleRenderOptions.BlendingSort). }
       DefaultBlendingSort = bs3D;
 
-      DefaultWireframeColor: TCastleColorRGB = (Data: (0, 0, 0));
+      DefaultWireframeColor: TCastleColorRGB = (X: 0; Y: 0; Z: 0);
 
       DefaultSolidWireframeScale = 1;
       DefaultSolidWireframeBias = 1;
@@ -158,6 +158,7 @@ type
       ReleaseCachedResources --- only the ones that affect TShapeCache. }
     function EqualForShapeCache(SecondValue: TCastleRenderOptions): boolean; virtual;
 
+    {$ifdef FPC}
     { @deprecated @exclude Old name for @link(Textures). }
     property EnableTextures: boolean
       read FTextures write SetTextures default true; deprecated 'use Textures';
@@ -193,6 +194,7 @@ type
       @exclude }
     property CustomShaderAlphaTest: TObject read FCustomShaderAlphaTest write FCustomShaderAlphaTest;
       deprecated 'use Effect node to define GLSL shaders that are more flexible';
+    {$endif FPC}
 
     { Rendering mode, can be used to disable many rendering features at once. }
     property Mode: TRenderingMode read FMode write SetMode default rmFull;
@@ -233,6 +235,7 @@ type
       read FSolidColorBlendingPipeline
       write FSolidColorBlendingPipeline;
 
+    {$ifdef FPC}
     { @deprecated @exclude Ignored now.
 
       Set to @true to make diffuse texture affect only material diffuse color
@@ -255,20 +258,25 @@ type
       read FSeparateDiffuseTexture
       write FSeparateDiffuseTexture default false;
       deprecated 'rendering always behaves as if this was true now, with Phong shading';
+    {$endif FPC}
 
     { Wireframe color, used with some WireframeEffect values.
       Default value is DefaultWireframeColor. }
     property WireframeColor: TCastleColorRGB
       read FWireframeColor write FWireframeColor;
 
-    { Should we use ARB_occlusion_query (if available) with
-      a hierarchical algorithm to avoid rendering
-      shapes that didn't pass occlusion test in previous frame.
-      Ignored if GPU doesn't support ARB_occlusion_query.
+    { Use the advanced version of the occlusion query:
+      "Coherent Hierarchical Culling", to optimize the rendered shapes.
+      The shapes obscured by other shapes will not be rendered.
 
-      @true may give you a large speedup in some scenes.
+      This is ignored if GPU doesn't support the necessary functionality
+      (for OpenGL, we require ARB_occlusion_query).
 
-      This method doesn't impose any lag of one frame (like @link(OcclusionQuery)).
+      We don't advise this approach to occlusion query now.
+      While this avoids the problem of "lag of one frame" (compared to @link(OcclusionQuery))
+      when the object should appear...
+      But the resulting algorithm (at least in our current implementation)
+      is slow and it does not treat transparent shapes correctly.
 
       This requires the usage of ssRendering in TCastleSceneCore.Spatial.
       Also, it always does frustum culling (like fcBox for now),
@@ -288,7 +296,7 @@ type
     property HierarchicalOcclusionQuery: boolean
       read FHierarchicalOcclusionQuery
       write FHierarchicalOcclusionQuery default false;
-      experimental;
+      {$ifdef FPC}experimental;{$endif FPC}
 
     { View only the shapes that were detected as visible by occlusion query
       in last Render.
@@ -353,13 +361,13 @@ type
     { Size of points. This has an effect on TPointSetNode rendering.
       Must be > 0. }
     property PointSize: Single
-      read FPointSize write FPointSize default DefaultPointSize;
+      read FPointSize write FPointSize {$ifdef FPC}default DefaultPointSize{$endif};
 
     { Line width. This has an effect on TLineSetNode rendering,
       and on wireframe rendering when @link(TCastleRenderOptions.WireframeEffect) indicates it.
       Must be > 0. }
     property LineWidth: Single
-      read FLineWidth write FLineWidth default DefaultLineWidth;
+      read FLineWidth write FLineWidth {$ifdef FPC}default DefaultLineWidth{$endif};
 
     { Use bump mapping. The bump mapping is only done when particular shape
       defines a normal map (and a height map, if you want parallax bump mapping).
@@ -431,7 +439,7 @@ type
       More precisely: if this is @true, all shapes with
       transparent materials or textures with non-trivial (not only yes/no)
       alpha channel will be rendered using blending.
-      See https://github.com/castle-engine/castle-engine/wiki/Blending
+      See https://castle-engine.io/blending
       for details how it works.
 
       If this is @false, everything will be rendered as opaque. }
@@ -443,7 +451,7 @@ type
       for specific shapes using @link(TBlendModeNode).
       See https://castle-engine.io/x3d_extensions.php#section_ext_blending for details of TBlendModeNode.
 
-      See https://github.com/castle-engine/castle-engine/wiki/Blending
+      See https://castle-engine.io/blending
       for details how it works.
 
       @groupBegin }
@@ -484,30 +492,22 @@ type
     property WireframeEffect: TWireframeEffect
       read FWireframeEffect write FWireframeEffect default weNormal;
 
-    property SolidWireframeScale: Single read FSolidWireframeScale write FSolidWireframeScale default DefaultSolidWireframeScale;
-    property SolidWireframeBias: Single read FSolidWireframeBias write FSolidWireframeBias default DefaultSolidWireframeBias;
-    property SilhouetteScale: Single read FSilhouetteScale write FSilhouetteScale default DefaultSilhouetteScale;
-    property SilhouetteBias: Single read FSilhouetteBias write FSilhouetteBias default DefaultSilhouetteBias;
+    property SolidWireframeScale: Single read FSolidWireframeScale write FSolidWireframeScale {$ifdef FPC}default DefaultSolidWireframeScale{$endif};
+    property SolidWireframeBias: Single read FSolidWireframeBias write FSolidWireframeBias {$ifdef FPC}default DefaultSolidWireframeBias{$endif};
+    property SilhouetteScale: Single read FSilhouetteScale write FSilhouetteScale {$ifdef FPC}default DefaultSilhouetteScale{$endif};
+    property SilhouetteBias: Single read FSilhouetteBias write FSilhouetteBias {$ifdef FPC}default DefaultSilhouetteBias{$endif};
 
-    { Should we use ARB_occlusion_query (if available) to avoid rendering
-      shapes that didn't pass occlusion test in previous frame.
-      Ignored if GPU doesn't support ARB_occlusion_query.
+    { Use the occlusion query to optimize the rendering.
+      The shapes obscured by other shapes will not be rendered.
+      This makes sense when in your view, many shapes are typically obscured by others.
 
-      @true may give you a large speedup in some scenes.
-      OTOH, a lag of one frame may happen between an object should
-      be rendered and it actually appears.
+      See the https://castle-engine.io/occlusion_query
+      for details how does this work.
 
-      When you render more than once the same instance of TCastleScene scene,
-      you should not activate it (as the occlusion query doesn't make sense
-      if each following render of the scene takes place at totally different
-      translation). Also, when rendering something more than just
-      one TCastleScene scene (maybe many times the same TCastleScene instance,
-      maybe many different TCastleScene instances, maybe some other
-      3D objects) you should try to sort rendering order
-      from the most to the least possible occluder (otherwise occlusion
-      query will not be as efficient at culling).
+      This is ignored if HierarchicalOcclusionQuery.
 
-      This is ignored if HierarchicalOcclusionQuery. }
+      This is ignored if GPU doesn't support the necessary functionality
+      (for OpenGL, we require ARB_occlusion_query). }
     property OcclusionQuery: boolean
       read FOcclusionQuery write SetOcclusionQuery default false;
 

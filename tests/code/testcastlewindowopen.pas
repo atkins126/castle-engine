@@ -32,7 +32,7 @@ type
 implementation
 
 uses CastleControls, CastleProgress, CastleWindowProgress, CastleImages,
-  CastleUIControls;
+  CastleUIControls, CastleViewport, CastleLevels;
 
 type
   TControl1 = class(TCastleUserInterface)
@@ -53,7 +53,7 @@ begin
   finally Progress.Fini end;
 end;
 
-procedure WindowOpen1(Container: TUIContainer);
+procedure WindowOpen1(Container: TCastleContainer);
 var
   I: Integer;
 begin
@@ -100,7 +100,7 @@ begin
   FreeAndNil(Image);
 end;
 
-procedure WindowOpen2(Container: TUIContainer);
+procedure WindowOpen2(Container: TCastleContainer);
 var
   Image: TCastleImage;
 begin
@@ -131,27 +131,41 @@ begin
 end;
 
 type
+  TCastleWindowWithSceneManager = class(TCastleWindow)
+    SceneManager: TGameSceneManager;
+    constructor Create(AOwner: TComponent); override;
+  end;
+
+constructor TCastleWindowWithSceneManager.Create(AOwner: TComponent);
+begin
+  inherited;
+  SceneManager := TGameSceneManager.Create(Self);
+  SceneManager.FullSize := true;
+  Controls.InsertFront(SceneManager);
+end;
+
+type
   TControl3 = class(TCastleUserInterface)
     procedure GLContextOpen; override;
   end;
 
 procedure TControl3.GLContextOpen;
 begin
-  (Application.MainWindow as TCastleWindow).SceneManager.LoadLevel('level_without_loading_image');
+  (Application.MainWindow as TCastleWindowWithSceneManager).SceneManager.LoadLevel('level_without_loading_image');
 end;
 
-procedure WindowOpen3(Container: TUIContainer);
+procedure WindowOpen3(Container: TCastleContainer);
 begin
-  (Application.MainWindow as TCastleWindow).SceneManager.LoadLevel('level_without_loading_image');
+  (Application.MainWindow as TCastleWindowWithSceneManager).SceneManager.LoadLevel('level_without_loading_image');
 end;
 
 procedure TTestCastleWindowOpen.TestLoadLevelFromOpen;
 
   procedure DoTest(const WithButton: boolean);
   var
-    Window: TCastleWindow;
+    Window: TCastleWindowWithSceneManager;
   begin
-    Window := TCastleWindow.Create(nil);
+    Window := TCastleWindowWithSceneManager.Create(nil);
     try
       Window.Controls.InsertFront(TControl3.Create(Window));
       if WithButton then

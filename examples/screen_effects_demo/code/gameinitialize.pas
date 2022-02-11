@@ -1,5 +1,5 @@
 {
-  Copyright 2018-2018 Michalis Kamburelis.
+  Copyright 2018-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -16,7 +16,7 @@
 { Game initialization and logic. }
 unit GameInitialize;
 
-{$modeswitch advancedrecords}
+{$ifdef FPC} {$modeswitch advancedrecords} {$endif}
 
 interface
 
@@ -30,7 +30,7 @@ uses SysUtils,
   CastleRenderOptions, CastleVectors;
 
 var
-  Window: TCastleWindowBase;
+  Window: TCastleWindow;
   LabelFPS: TCastleLabel;
 
   { 3 controls below have methods AddScreenEffect / RemoveScreenEffect
@@ -117,7 +117,7 @@ end;
 
 { routines ------------------------------------------------------------------- }
 
-procedure WindowUpdate(Container: TUIContainer);
+procedure WindowUpdate(Container: TCastleContainer);
 begin
   LabelFPS.Caption := 'FPS: ' + Container.Fps.ToString;
 end;
@@ -241,7 +241,7 @@ begin
   Window.Container.UIReferenceHeight := 768;
   Window.Container.UIScaling := usEncloseReferenceSize;
 
-  { Insert almost-black background, otherwise (as Window is only TCastleWindowBase)
+  { Insert almost-black background, otherwise (as Window is only TCastleWindow)
     the background would be undefined. }
   Background := TCastleRectangleControl.Create(Application);
   Background.Color := Vector4(0.1, 0.1, 0.1, 1);
@@ -357,19 +357,19 @@ begin
   FilmGrain.Button := TCastleButton.Create(Application);
   FilmGrain.Button.Caption := 'Film Grain';
   FilmGrain.Button.Toggle := true;
-  FilmGrain.Button.OnClick := @TEventsHandler(nil).ToggleFilmGrain;
+  FilmGrain.Button.OnClick := {$ifdef FPC}@{$endif} TEventsHandler {$ifdef FPC}(nil){$endif}.ToggleFilmGrain;
   BottomControls.InsertFront(FilmGrain.Button);
 
   Pixelate.Button := TCastleButton.Create(Application);
   Pixelate.Button.Caption := 'Pixelate';
   Pixelate.Button.Toggle := true;
-  Pixelate.Button.OnClick := @TEventsHandler(nil).TogglePixelate;
+  Pixelate.Button.OnClick := {$ifdef FPC}@{$endif} TEventsHandler {$ifdef FPC}(nil){$endif}.TogglePixelate;
   BottomControls.InsertFront(Pixelate.Button);
 
   EdgeDetect.Button := TCastleButton.Create(Application);
   EdgeDetect.Button.Caption := 'Edge Detect';
   EdgeDetect.Button.Toggle := true;
-  EdgeDetect.Button.OnClick := @TEventsHandler(nil).ToggleEdgeDetect;
+  EdgeDetect.Button.OnClick := {$ifdef FPC}@{$endif} TEventsHandler {$ifdef FPC}(nil){$endif}.ToggleEdgeDetect;
   BottomControls.InsertFront(EdgeDetect.Button);
 
   InitializeScreenEffects;
@@ -380,6 +380,6 @@ initialization
   Application.OnInitialize := @ApplicationInitialize;
 
   { Create and assign Application.MainWindow. }
-  Window := TCastleWindowBase.Create(Application);
+  Window := TCastleWindow.Create(Application);
   Application.MainWindow := Window;
 end.

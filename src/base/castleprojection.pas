@@ -1,5 +1,5 @@
 {
-  Copyright 2003-2018 Michalis Kamburelis.
+  Copyright 2003-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -141,7 +141,7 @@ begin
   case ProjectionType of
     ptPerspective:
       Result := PerspectiveProjectionMatrixRad(
-        PerspectiveAnglesRad.Data[1],
+        PerspectiveAnglesRad.Y,
         AspectRatio,
         ProjectionNear,
         ProjectionFar);
@@ -164,7 +164,10 @@ end;
 function TProjection.Initialized: Boolean;
 begin
   Result :=
-    (ProjectionNear <> 0) and
+    { ProjectionNear may remain = 0 in case of orthographic projection,
+      see TCastleViewport.CalculateProjection .
+      Testcase: glTF-Sample-Models/2.0/Cameras/glTF/Cameras.gltf , switch to ortho viewpoint. }
+    // (ProjectionNear <> 0) and
     (ProjectionFarFinite <> 0) and
     (Dimensions.Width <> 0) and
     (Dimensions.Height <> 0);
