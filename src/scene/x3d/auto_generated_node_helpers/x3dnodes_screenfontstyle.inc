@@ -1,6 +1,6 @@
 { -*- buffer-read-only: t -*-
 
-  Copyright 2015-2021 Michalis Kamburelis.
+  Copyright 2015-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -201,10 +201,12 @@ begin
 
   FFdPointSize := TSFFloat.Create(Self, False, 'pointSize', 12.0);
    FdPointSize.ChangeAlways := chVisibleNonGeometry;
+   FdPointSize.MustBeNonnegative := true;
   AddField(FFdPointSize);
 
   FFdSpacing := TSFFloat.Create(Self, False, 'spacing', 1.0);
    FdSpacing.ChangeAlways := chVisibleNonGeometry;
+   FdSpacing.MustBeNonnegative := true;
   AddField(FFdSpacing);
 
   FFdStyle := TSFStringEnum.Create(Self, False, 'style', FontStyleNames, Ord(fsPlain));

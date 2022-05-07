@@ -1,6 +1,6 @@
 { -*- buffer-read-only: t -*-
 
-  Copyright 2015-2021 Michalis Kamburelis.
+  Copyright 2015-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -258,6 +258,7 @@ begin
   FFdCreaseAngle := TSFFloat.Create(Self, False, 'creaseAngle', 0);
    FdCreaseAngle.ChangeAlways := chGeometry;
    FdCreaseAngle.Angle := true;
+   FdCreaseAngle.MustBeNonnegative := true;
   AddField(FFdCreaseAngle);
 
   FFdCrossSection := TMFVec2f.Create(Self, False, 'crossSection', [ Vector2(1, 1), Vector2(1, -1), Vector2(-1, -1), Vector2(-1, 1), Vector2(1, 1) ]);

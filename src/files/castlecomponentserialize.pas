@@ -1,5 +1,5 @@
 {
-  Copyright 2018-2021 Michalis Kamburelis.
+  Copyright 2018-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -123,9 +123,11 @@ var
   OnInternalTranslateDesign: TInternalTranslateDesignCallback;
 
 var
-  { Set by custom editor template (used when project defines editor_units).
+  { Non-empty only in custom editor builds.
+    Indicates project name corresponding to this editor.
+    Set by custom editor template (used when project defines editor_units).
     @exclude }
-  InternalHasCustomComponents: Boolean;
+  InternalCustomComponentsForProject: String;
 
 implementation
 
@@ -624,7 +626,7 @@ type
     var
       FStreamer: TJsonStreamer;
       { Using just one TSerializationProcessWriter instance is not enough,
-        as C.CustomSerialiazion calls may happen recursively. }
+        as C.CustomSerialization calls may happen recursively. }
       SerializationProcessPool: TSerializationProcessWriterList;
       SerializationProcessPoolUsed: Integer;
 

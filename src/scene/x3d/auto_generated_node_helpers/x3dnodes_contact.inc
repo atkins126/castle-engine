@@ -1,6 +1,6 @@
 { -*- buffer-read-only: t -*-
 
-  Copyright 2015-2021 Michalis Kamburelis.
+  Copyright 2015-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -387,6 +387,7 @@ begin
 
   FFdMinbounceSpeed := TSFFloat.Create(Self, True, 'minbounceSpeed', 0);
    FdMinbounceSpeed.ChangeAlways := chVisibleNonGeometry;
+   FdMinbounceSpeed.MustBeNonnegative := true;
   AddField(FFdMinbounceSpeed);
 
   FFdPosition := TSFVec3f.Create(Self, True, 'position', Vector3(0, 0, 0));

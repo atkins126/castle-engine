@@ -1,6 +1,6 @@
 { -*- buffer-read-only: t -*-
 
-  Copyright 2015-2021 Michalis Kamburelis.
+  Copyright 2015-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -149,10 +149,12 @@ begin
 
   FFdMaxSeparation := TSFFloat.Create(Self, True, 'maxSeparation', 1);
    FdMaxSeparation.ChangeAlways := chVisibleNonGeometry;
+   FdMaxSeparation.MustBeNonnegative := true;
   AddField(FFdMaxSeparation);
 
   FFdMinSeparation := TSFFloat.Create(Self, True, 'minSeparation', 0);
    FdMinSeparation.ChangeAlways := chVisibleNonGeometry;
+   FdMinSeparation.MustBeNonnegative := true;
   AddField(FFdMinSeparation);
 
   FFdStopBounce := TSFFloat.Create(Self, True, 'stopBounce', 0);

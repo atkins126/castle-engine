@@ -1,6 +1,6 @@
 { -*- buffer-read-only: t -*-
 
-  Copyright 2015-2021 Michalis Kamburelis.
+  Copyright 2015-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -479,6 +479,7 @@ begin
 
   FFdReadInterval := TSFFloat.Create(Self, True, 'readInterval', 0.1);
    FdReadInterval.ChangeAlways := chVisibleNonGeometry;
+   FdReadInterval.MustBeNonnegative := true;
   AddField(FFdReadInterval);
 
   FFdRtpHeaderExpected := TSFBool.Create(Self, True, 'rtpHeaderExpected', false);
@@ -507,6 +508,7 @@ begin
 
   FFdWriteInterval := TSFFloat.Create(Self, True, 'writeInterval', 1.0);
    FdWriteInterval.ChangeAlways := chVisibleNonGeometry;
+   FdWriteInterval.MustBeNonnegative := true;
   AddField(FFdWriteInterval);
 
   FEventIsNetworkReader := TSFBoolEvent.Create(Self, 'isNetworkReader', false);

@@ -35,7 +35,7 @@ type
       We discourage using it. Use X, Y to change vector components.
       Use AsArray to access it by index, read-only. }
     property Data [const Index: TIndex]: Integer read GetItems write SetItems;
-      deprecated 'use instead X, Y fields';
+      {$ifdef FPC}deprecated 'use instead X, Y fields';{$endif}
 
     { @exclude
       Access (get, set) vector components by index.
@@ -52,7 +52,7 @@ type
 
     function ToString: string;
     property Items [const Index: TIndex]: Integer read GetItems write SetItems;
-      deprecated 'use instead X, Y fields';
+      {$ifdef FPC}deprecated 'use instead X, Y fields';{$endif}
 
     function IsZero: boolean; inline;
     class function Equals(const V1, V2: TVector2Integer): boolean; static; inline;
@@ -76,7 +76,7 @@ type
       We discourage using it. Use X, Y, Z to change vector components.
       Use AsArray to access it by index, read-only. }
     property Data [const Index: TIndex]: Integer read GetItems write SetItems;
-      deprecated 'use instead X, Y, Z fields';
+      {$ifdef FPC}deprecated 'use instead X, Y, Z fields';{$endif}
 
     { @exclude
       Access (get, set) vector components by index.
@@ -93,7 +93,7 @@ type
 
     function ToString: string;
     property Items [const Index: TIndex]: Integer read GetItems write SetItems;
-      deprecated 'use instead X, Y, Z fields';
+      {$ifdef FPC}deprecated 'use instead X, Y, Z fields';{$endif}
 
     function IsZero: boolean; inline;
     class function Equals(const V1, V2: TVector3Integer): boolean; static; inline;
@@ -117,7 +117,7 @@ type
       We discourage using it. Use X, Y, Z, W to change vector components.
       Use AsArray to access it by index, read-only. }
     property Data [const Index: TIndex]: Integer read GetItems write SetItems;
-      deprecated 'use instead X, Y, Z, W fields';
+      {$ifdef FPC}deprecated 'use instead X, Y, Z, W fields';{$endif}
 
     { @exclude
       Access (get, set) vector components by index.
@@ -134,7 +134,7 @@ type
 
     function ToString: string;
     property Items [const Index: TIndex]: Integer read GetItems write SetItems;
-      deprecated 'use instead X, Y, Z, W fields';
+      {$ifdef FPC}deprecated 'use instead X, Y, Z, W fields';{$endif}
 
     function IsZero: boolean; inline;
     class function Equals(const V1, V2: TVector4Integer): boolean; static; inline;
@@ -207,6 +207,7 @@ begin
   case Index of
     0: Result := X;
     1: Result := Y;
+    {$ifndef FPC} else raise EInternalError.Create(2022021113); {$endif}
   end;
 end;
 
@@ -215,6 +216,7 @@ begin
   case Index of
     0: X := Value;
     1: Y := Value;
+    {$ifndef FPC} else raise EInternalError.Create(2022021114); {$endif}
   end;
 end;
 
@@ -270,6 +272,7 @@ begin
     0: Result := X;
     1: Result := Y;
     2: Result := Z;
+    {$ifndef FPC} else raise EInternalError.Create(2022021115); {$endif}
   end;
 end;
 
@@ -279,6 +282,7 @@ begin
     0: X := Value;
     1: Y := Value;
     2: Z := Value;
+    {$ifndef FPC} else raise EInternalError.Create(2022021116); {$endif}
   end;
 end;
 
@@ -340,6 +344,7 @@ begin
     1: Result := Y;
     2: Result := Z;
     3: Result := W;
+    {$ifndef FPC} else raise EInternalError.Create(2022021117); {$endif}
   end;
 end;
 
@@ -350,6 +355,7 @@ begin
     1: Y := Value;
     2: Z := Value;
     3: W := Value;
+    {$ifndef FPC} else raise EInternalError.Create(2022021118); {$endif}
   end;
 end;
 

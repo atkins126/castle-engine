@@ -35,7 +35,7 @@ type
       We discourage using it. Use X, Y to change vector components.
       Use AsArray to access it by index, read-only. }
     property Data [const Index: TIndex]: Byte read GetItems write SetItems;
-      deprecated 'use instead X, Y fields';
+      {$ifdef FPC}deprecated 'use instead X, Y fields';{$endif}
 
     { Get vector components by index. }
     property AsArray [const Index: TIndex]: Byte read GetItems; default;
@@ -46,7 +46,7 @@ type
 
     function ToString: string;
     property Items [const Index: TIndex]: Byte read GetItems write SetItems;
-      deprecated 'use instead X, Y fields';
+      {$ifdef FPC}deprecated 'use instead X, Y fields';{$endif}
 
     function IsZero: boolean; inline;
     class function Equals(const V1, V2: TVector2Byte): boolean; static; inline;
@@ -70,7 +70,7 @@ type
       We discourage using it. Use X, Y, Z to change vector components.
       Use AsArray to access it by index, read-only. }
     property Data [const Index: TIndex]: Byte read GetItems write SetItems;
-      deprecated 'use instead X, Y, Z fields';
+      {$ifdef FPC}deprecated 'use instead X, Y, Z fields';{$endif}
 
     { Get vector components by index. }
     property AsArray [const Index: TIndex]: Byte read GetItems; default;
@@ -81,7 +81,7 @@ type
 
     function ToString: string;
     property Items [const Index: TIndex]: Byte read GetItems write SetItems;
-      deprecated 'use instead X, Y, Z fields';
+      {$ifdef FPC}deprecated 'use instead X, Y, Z fields';{$endif}
 
     function IsZero: boolean; inline;
     class function Equals(const V1, V2: TVector3Byte): boolean; static; inline;
@@ -105,7 +105,7 @@ type
       We discourage using it. Use X, Y, Z, W to change vector components.
       Use AsArray to access it by index, read-only. }
     property Data [const Index: TIndex]: Byte read GetItems write SetItems;
-      deprecated 'use instead X, Y, Z, W fields';
+      {$ifdef FPC}deprecated 'use instead X, Y, Z, W fields';{$endif}
 
     { Get vector components by index. }
     property AsArray [const Index: TIndex]: Byte read GetItems; default;
@@ -116,7 +116,7 @@ type
 
     function ToString: string;
     property Items [const Index: TIndex]: Byte read GetItems write SetItems;
-      deprecated 'use instead X, Y, Z, W fields';
+      {$ifdef FPC}deprecated 'use instead X, Y, Z, W fields';{$endif}
 
     function IsZero: boolean; inline;
     class function Equals(const V1, V2: TVector4Byte): boolean; static; inline;
@@ -192,6 +192,7 @@ begin
   case Index of
     0: Result := X;
     1: Result := Y;
+    {$ifndef FPC} else raise EInternalError.Create(202202117); {$endif}
   end;
 end;
 
@@ -200,6 +201,7 @@ begin
   case Index of
     0: X := Value;
     1: Y := Value;
+    {$ifndef FPC} else raise EInternalError.Create(202202118); {$endif}
   end;
 end;
 
@@ -255,6 +257,7 @@ begin
     0: Result := X;
     1: Result := Y;
     2: Result := Z;
+    {$ifndef FPC} else raise EInternalError.Create(202202119); {$endif}
   end;
 end;
 
@@ -264,6 +267,7 @@ begin
     0: X := Value;
     1: Y := Value;
     2: Z := Value;
+    {$ifndef FPC} else raise EInternalError.Create(2022021110); {$endif}
   end;
 end;
 
@@ -325,6 +329,7 @@ begin
     1: Result := Y;
     2: Result := Z;
     3: Result := W;
+    {$ifndef FPC} else raise EInternalError.Create(2022021111); {$endif}
   end;
 end;
 
@@ -335,6 +340,7 @@ begin
     1: Y := Value;
     2: Z := Value;
     3: W := Value;
+    {$ifndef FPC} else raise EInternalError.Create(2022021112); {$endif}
   end;
 end;
 

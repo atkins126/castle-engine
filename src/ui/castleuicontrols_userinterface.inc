@@ -181,7 +181,7 @@
 
       @unorderedList(
         @item(@bold(This must ignore)
-          the current value of the @link(GetExists) method
+          the current value of the @link(Exists) method
           and @link(Exists) property, that is: the result of this function
           assumes that control does exist.)
 
@@ -450,7 +450,7 @@
       regardless of whether the control is under the mouse and regardless
       of what other controls already did. So all controls (well,
       all controls that exist, in case of TCastleUserInterface,
-      see TCastleUserInterface.GetExists) receive Update calls.
+      see TCastleUserInterface.Exists) receive Update calls.
 
       So the "handled" status is passed through HandleInput.
       If a control is not under the mouse, it will receive HandleInput
@@ -565,43 +565,55 @@
       if possible. }
     procedure InsertControl(const Index: Integer; const NewItem: TCastleUserInterface);
 
-    { Remove control added by @link(InsertFront) or @link(InsertBack). }
+    { Remove control added by @link(InsertFront) or @link(InsertBack).
+
+      Note that this method @italic(does not) free the Item instance.
+      This method merely removes Item from our controls,
+      so that Item is no longer rendered as part of this parent.
+      It is still the caller's responsibility to make sure the Item is freed
+      at some point.
+
+      See https://castle-engine.io/modern_pascal_introduction.html#_freeing_classes
+      for description how to free instances in Pascal.
+      As TCastleUserInterface descends from TComponent, a simple and proper solution
+      is often just to create it with some "owner" (like @link(TUIState.FreeAtStop) or @link(Application))
+      that will take care of freeing it. }
     procedure RemoveControl(const Item: TCastleUserInterface);
 
     { Index of child control, or -1 if not present. }
     function IndexOfControl(const Item: TCastleUserInterface): Integer;
 
-    { Remove all child controls added by @link(InsertFront) or @link(InsertBack). }
+    { Remove all child controls added by @link(InsertFront) or @link(InsertBack).
+
+      Note that, just like @link(RemoveControl), this method @italic(does not) free
+      the children controls. This method merely removes children controls,
+      so they are no longer rendered as part of the parent.
+      It is still the caller's responsibility to make sure the children controls
+      are freed at some point.
+
+      See https://castle-engine.io/modern_pascal_introduction.html#_freeing_classes
+      for description how to free instances in Pascal.
+      As TCastleUserInterface descends from TComponent, a simple and proper solution
+      is often just to create it with some "owner" (like @link(TUIState.FreeAtStop) or @link(Application))
+      that will take care of freeing it. }
     procedure ClearControls;
 
-    { Return whether item really exists, see @link(Exists).
-      Non-existing item does not receive any of the render or input or update calls.
-      They only receive @link(GLContextOpen), @link(GLContextClose), @link(Resize)
-      calls.
-
-      It TCastleUserInterface class, this returns the value of @link(Exists) property.
-      May be overridden in descendants, to return something more complicated,
-      but it should always be a logical "and" with the inherited @link(GetExists)
-      implementation (so setting the @code(Exists := false) will always work),
-      like
-
-      @longCode(#
-        Result := (inherited GetExists) and MyComplicatedConditionForExists;
-      #) }
-    function GetExists: boolean; virtual;
+    {$ifdef FPC}
+    property GetExists: Boolean read FExists; deprecated 'use Exists';
+    {$endif}
 
     { Does this control capture events under this container position.
       The default implementation simply checks whether Position
       is inside @link(RenderRect).
       It also checks whether @link(CapturesEvents) is @true.
 
-      Always treated like @false when GetExists returns @false,
+      Always treated like @false when Exists returns @false,
       so the implementation of this method only needs to make checks assuming that
-      GetExists = @true.  }
+      Exists = @true.  }
     function CapturesEventsAtPosition(const Position: TVector2): boolean; virtual;
 
     { Prepare your resources, right before drawing.
-      Called only when @link(GetExists) and GLInitialized.
+      Called only when @link(Exists) and GLInitialized.
 
       @bold(Do not explicitly call this method.)
       Instead, render controls by adding them to the
@@ -610,7 +622,7 @@
     }
     procedure BeforeRender; virtual;
 
-    { Render a control. Called only when @link(GetExists) and GLInitialized,
+    { Render a control. Called only when @link(Exists) and GLInitialized,
       you can depend on it in the implementation of this method.
 
       @bold(Do not explicitly call this method.)
@@ -684,7 +696,7 @@
       In other words, this is the moment when you can initialize
       OpenGL resources, like display lists, VBOs, OpenGL texture names, etc.
 
-      As an exception, this is called regardless of the GetExists value.
+      As an exception, this is called regardless of the Exists value.
       This way a control can prepare it's resources, regardless if it exists now. }
     procedure GLContextOpen; virtual;
 
@@ -697,7 +709,7 @@
       You should release here any resources that are tied to the
       OpenGL context. In particular, the ones created in GLContextOpen.
 
-      As an exception, this is called regardless of the GetExists value.
+      As an exception, this is called regardless of the Exists value.
       This way a control can release it's resources, regardless if it exists now. }
     procedure GLContextClose; virtual;
 
@@ -755,9 +767,6 @@
       Parent may be @nil, which means that the @link(Container)
       (if set) is our direct parent. }
     property Parent: TCastleUserInterface read FParent;
-
-    function Rect: TFloatRectangle; virtual;
-      deprecated 'instead of using this, use EffectiveRect or RenderRect depending on the situation; instead of overriding this, override PreferredSize';
 
     { Control position and size.
       Use this to base other controls size/position on this control's
@@ -843,7 +852,7 @@
       to the parent position, use @link(RenderRect)
       or @link(RenderRectWithBorder) instead.
 
-      This method ignores the current value of the @link(GetExists) method
+      This method ignores the current value of the @link(Exists) method
       and @link(Exists) property, that is: the result of this function
       assumes that control does exist.
 
@@ -1161,9 +1170,10 @@
 
     { Not existing control is not visible, it doesn't receive input
       and generally doesn't exist from the point of view of user.
-      You can also remove this from controls list (like
-      @link(TCastleWindow.Controls)), but often it's more comfortable
-      to set this property to false. }
+      This is mostly equivalent to just removing this control from parent list.
+
+      Non-existing controls still receive
+      @link(GLContextOpen), @link(GLContextClose), @link(Resize) events. }
     property Exists: boolean read FExists write SetExists default true;
 
     { Position from the left side of the parent control.
@@ -1907,7 +1917,7 @@ var
   I: Integer;
   R: TFloatRectangle;
 begin
-  if GetExists then
+  if Exists then
   begin
     CacheRectBegin;
 
@@ -1967,11 +1977,6 @@ end;
 procedure TCastleUserInterface.GLContextClose;
 begin
   FGLInitialized := false;
-end;
-
-function TCastleUserInterface.GetExists: boolean;
-begin
-  Result := FExists;
 end;
 
 procedure TCastleUserInterface.DoInternalMouseEnter;
@@ -2189,29 +2194,13 @@ end;
 
 {$warnings on}
 
-function TCastleUserInterface.Rect: TFloatRectangle;
-begin
-  Result := TFloatRectangle.Empty;
-end;
-
 procedure TCastleUserInterface.BeforeSizing;
 begin
 end;
 
 procedure TCastleUserInterface.PreferredSize(var PreferredWidth, PreferredHeight: Single);
-var
-  R: TFloatRectangle;
 begin
-  { Keep the old code, written when Rect was not deprecated
-    and PreferredSize was not available, working. }
-  {$warnings off}
-  R := Rect;
-  {$warnings on}
-  if (not R.IsEmpty) then // this means that Rect was overridden
-  begin
-    PreferredWidth := R.Width;
-    PreferredHeight := R.Height;
-  end;
+  // nothing to be done here
 end;
 
 function TCastleUserInterface.RectWithoutAnchors: TFloatRectangle;
@@ -2230,7 +2219,7 @@ function TCastleUserInterface.RectWithoutAnchors: TFloatRectangle;
     for I := 0 to ControlsCount - 1 do
     begin
       C := Controls[I];
-      if not C.GetExists then Continue;
+      if not C.Exists then Continue;
 
       { Calculate ChildRect.
         We cannot use C.EffectiveRect or C.RectWithAnchors now,

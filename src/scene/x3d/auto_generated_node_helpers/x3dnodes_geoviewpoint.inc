@@ -1,6 +1,6 @@
 { -*- buffer-read-only: t -*-
 
-  Copyright 2015-2021 Michalis Kamburelis.
+  Copyright 2015-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -200,6 +200,7 @@ begin
 
   FFdSpeedFactor := TSFFloat.Create(Self, False, 'speedFactor', 1.0);
    FdSpeedFactor.ChangeAlways := chVisibleNonGeometry;
+   FdSpeedFactor.MustBeNonnegative := true;
   AddField(FFdSpeedFactor);
 end;
 

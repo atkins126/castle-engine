@@ -1,6 +1,6 @@
 { -*- buffer-read-only: t -*-
 
-  Copyright 2015-2021 Michalis Kamburelis.
+  Copyright 2015-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -1307,6 +1307,7 @@ begin
 
   FFdFiringRange := TSFFloat.Create(Self, True, 'firingRange', 0.0);
    FdFiringRange.ChangeAlways := chVisibleNonGeometry;
+   FdFiringRange.MustBeNonnegative := true;
   AddField(FFdFiringRange);
 
   FFdFiringRate := TSFInt32.Create(Self, True, 'firingRate', 0);

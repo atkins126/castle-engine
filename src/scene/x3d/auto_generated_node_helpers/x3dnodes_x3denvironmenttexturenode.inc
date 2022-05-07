@@ -1,6 +1,6 @@
 { -*- buffer-read-only: t -*-
 
-  Copyright 2015-2021 Michalis Kamburelis.
+  Copyright 2015-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -25,11 +25,24 @@
 
 {$ifdef read_interface}
 
+  public
+    procedure CreateNode; override;
+    class function ClassX3DType: string; override;
 
 {$endif read_interface}
 
 {$ifdef read_implementation}
 
 { TAbstractEnvironmentTextureNode ----------------------------------------------- }
+
+class function TAbstractEnvironmentTextureNode.ClassX3DType: String;
+begin
+  Result := 'X3DEnvironmentTextureNode';
+end;
+
+procedure TAbstractEnvironmentTextureNode.CreateNode;
+begin
+  inherited;
+end;
 
 {$endif read_implementation}

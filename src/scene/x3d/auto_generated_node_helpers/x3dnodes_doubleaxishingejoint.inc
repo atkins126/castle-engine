@@ -1,6 +1,6 @@
 { -*- buffer-read-only: t -*-
 
-  Copyright 2015-2021 Michalis Kamburelis.
+  Copyright 2015-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -371,6 +371,7 @@ begin
 
   FFdStopConstantForceMix1 := TSFFloat.Create(Self, True, 'stopConstantForceMix1', 0.001);
    FdStopConstantForceMix1.ChangeAlways := chVisibleNonGeometry;
+   FdStopConstantForceMix1.MustBeNonnegative := true;
   AddField(FFdStopConstantForceMix1);
 
   FFdStopErrorCorrection1 := TSFFloat.Create(Self, True, 'stopErrorCorrection1', 0.8);
@@ -383,6 +384,7 @@ begin
 
   FFdSuspensionForce := TSFFloat.Create(Self, True, 'suspensionForce', 0);
    FdSuspensionForce.ChangeAlways := chVisibleNonGeometry;
+   FdSuspensionForce.MustBeNonnegative := true;
   AddField(FFdSuspensionForce);
 
   FEventBody1AnchorPoint := TSFVec3fEvent.Create(Self, 'body1AnchorPoint', false);

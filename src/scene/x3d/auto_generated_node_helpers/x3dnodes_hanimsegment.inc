@@ -1,6 +1,6 @@
 { -*- buffer-read-only: t -*-
 
-  Copyright 2015-2021 Michalis Kamburelis.
+  Copyright 2015-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -224,6 +224,7 @@ begin
 
   FFdMass := TSFFloat.Create(Self, True, 'mass', 0);
    FdMass.ChangeAlways := chVisibleNonGeometry;
+   FdMass.MustBeNonnegative := true;
   AddField(FFdMass);
 
   FFdMomentsOfInertia := TMFFloat.Create(Self, True, 'momentsOfInertia', [0, 0, 0, 0, 0, 0, 0, 0, 0]);

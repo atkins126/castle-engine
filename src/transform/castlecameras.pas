@@ -367,8 +367,15 @@ type
 
       Returned Dir and Up must be orthogonal.
       Returned Dir and Up and GravityUp are already normalized. }
-    procedure GetView(out APos, ADir, AUp: TVector3); overload;
-    procedure GetView(out APos, ADir, AUp, AGravityUp: TVector3); overload;
+    procedure GetView(out APos, ADir, AUp: TVector3); overload; deprecated 'use GetWorldView';
+    procedure GetView(out APos, ADir, AUp, AGravityUp: TVector3); overload; deprecated 'use GetWorldView';
+
+    { Express current view as camera vectors: position, direction, up.
+      In world coordinates.
+
+      Returned Dir and Up must be orthogonal.
+      Returned Dir and Up and GravityUp are already normalized. }
+    procedure GetWorldView(out APos, ADir, AUp: TVector3);
 
     { Set camera view from vectors: position, direction, up.
 
@@ -381,18 +388,26 @@ type
       (preserving the given direction value),
       otherwise we will adjust the direction (preserving the given up value). }
     procedure SetView(const ADir, AUp: TVector3;
-      const AdjustUp: boolean = true); overload;
+      const AdjustUp: boolean = true); overload; deprecated 'use SetWorldView';
     procedure SetView(const APos, ADir, AUp: TVector3;
-      const AdjustUp: boolean = true); overload;
+      const AdjustUp: boolean = true); overload; deprecated 'use SetWorldView';
     procedure SetView(const APos, ADir, AUp, AGravityUp: TVector3;
-      const AdjustUp: boolean = true); overload;
+      const AdjustUp: boolean = true); overload; deprecated 'use SetWorldView';
 
-    { Camera position, looking direction and up vector.
+    { Set camera view from vectors: position, direction, up.
 
-      Call @link(GoToInitial) to set the current vectors to initial vectors,
-      making them equal to InitialPosition, InitialDirection, InitialUp.
-      You can also use @code(Init) method on some navigation descendants
-      like @link(TCastleExamineNavigation.Init) and @link(TCastleWalkNavigation.Init).
+      ADir, AUp do not have to be normalized,
+      we will normalize them internally if necessary.
+      But make sure they are non-zero.
+
+      We will automatically fix ADir and AUp to be orthogonal, if necessary:
+      when AdjustUp = @true (the default) we will adjust the up vector
+      (preserving the given direction value),
+      otherwise we will adjust the direction (preserving the given up value). }
+    procedure SetWorldView(const APos, ADir, AUp: TVector3;
+      const AdjustUp: boolean = true);
+
+    { Camera looking direction and up vector.
 
       The @link(Direction) and @link(Up) vectors should always be normalized
       (have length 1). When setting them by these properties, we will normalize
@@ -403,10 +418,16 @@ type
       when setting @link(Up), @link(Direction) will be adjusted.
 
       @groupBegin }
-    property Position : TVector3 read FPosition  write SetPosition;
     property Direction: TVector3 read FDirection write SetDirection;
     property Up       : TVector3 read FUp        write SetUp;
     { @groupEnd }
+
+    { Translation (position, location) of the camera. }
+    property Translation: TVector3 read FPosition write SetPosition;
+
+    { Deprecated name for Translation. @deprecated }
+    property Position : TVector3 read FPosition write SetPosition;
+      {$ifdef FPC}deprecated 'use Translation';{$endif}
 
     { Change up vector, keeping the direction unchanged.
       If necessary, the up vector provided here will be fixed to be orthogonal
@@ -685,6 +706,8 @@ type
     procedure SetProjectionMatrix(const Value: TMatrix4);
     function GetFrustum: TFrustum;
     function GoodModelBox: TBox3D;
+    function GetIgnoreAllInputs: boolean;
+    procedure SetIgnoreAllInputs(const Value: boolean);
   protected
     { Needed for niMouseDragging navigation.
       Checking MouseDraggingStarted means that we handle only dragging that
@@ -694,14 +717,11 @@ type
     MouseDraggingStarted: Integer;
     MouseDraggingStart: TVector2;
 
-    procedure SetInput(const Value: TNavigationInputs); virtual;
-    function GetIgnoreAllInputs: boolean;
-    procedure SetIgnoreAllInputs(const Value: boolean);
-    procedure SetRadius(const Value: Single); virtual;
+    { Behave as if @link(Input) is like this.
+      This allows to disable input on paused viewport. }
+    function UsingInput: TNavigationInputs;
 
     function ReallyEnableMouseDragging: boolean; virtual;
-
-    procedure SetModelBox(const B: TBox3D);
 
     { Check collisions to determine how high above ground is given point.
       Calls OnInternalHeight callback. }
@@ -758,7 +778,6 @@ type
 
     constructor Create(AOwner: TComponent); override;
     procedure Assign(Source: TPersistent); override;
-    function GetExists: boolean; override;
     function PropertySections(const PropertyName: String): TPropertySections; override;
 
     { Used by @link(MoveAllowed), see there for description.
@@ -852,7 +871,7 @@ type
           Input_IncreasePreferredHeight, Input_DecreasePreferredHeight.
         )
       ) }
-    property Radius: Single read FRadius write SetRadius {$ifdef FPC}default DefaultRadius{$endif};
+    property Radius: Single read FRadius write FRadius {$ifdef FPC}default DefaultRadius{$endif};
 
     { Express current view as camera vectors: position, direction, up.
 
@@ -1136,7 +1155,7 @@ type
       used by @link(TCastleExamineNavigation) descendant.
       Determines speed of movement and zooming.
       Initially this is TBox3D.Empty. }
-    property ModelBox: TBox3D read FModelBox write SetModelBox;
+    property ModelBox: TBox3D read FModelBox write FModelBox;
 
     { Input methods available to user. See documentation of TNavigationInput
       type for possible values and their meaning.
@@ -1144,7 +1163,7 @@ type
       To disable any user interaction with this navigation
       you can simply set this to empty.
       You can also leave @link(TCastleViewport.Navigation) as @nil. }
-    property Input: TNavigationInputs read FInput write SetInput default DefaultInput;
+    property Input: TNavigationInputs read FInput write FInput default DefaultInput;
   published
     // By default this captures events from whole parent, which should be whole Viewport.
     property FullSize default true;
@@ -2076,7 +2095,7 @@ type
     { @groupEnd }
 
     { Moving speed when mouse dragging.
-      Relevant only when @code((MouseDragMode is mdWalk) and (niMouseDragging in Input)). }
+      Relevant only when @code((MouseDragMode is mdWalk) and (niMouseDragging in UsingInput)). }
     property MouseDraggingMoveSpeed: Single
       read FMouseDraggingMoveSpeed write FMouseDraggingMoveSpeed
       {$ifdef FPC}default DefaultMouseDraggingMoveSpeed{$endif};
@@ -2257,14 +2276,12 @@ const
       Max(DefaultPreferredHeight, Radius * RadiusToPreferredHeightMin)
     This way, in case of models that are small, but still follow the standard "1 unit = 1 meter",
     the PreferredHeight will not get weirdly small, it will be DefaultPreferredHeight.
-    Testcase: examples/third_person_camera/data/level/level-dungeon.gltf open with view3dscene.
+    Testcase: examples/third_person_navigation/data/level/level-dungeon.gltf open with view3dscene.
   }
   RadiusToPreferredHeightMin = 4.0;
 
   { Multiply world bounding box AverageSize by this to get sensible radius. }
   WorldBoxSizeToRadius = 0.005;
-
-procedure Register;
 
 implementation
 
@@ -2272,12 +2289,9 @@ uses Math,
   CastleStringUtils, CastleLog, CastleViewport,
   CastleComponentSerialize;
 
-procedure Register;
-begin
-  {$ifdef CASTLE_REGISTER_ALL_COMPONENTS_IN_LAZARUS}
-  RegisterComponents('Castle', [TCastleExamineNavigation, TCastleWalkNavigation]);
-  {$endif}
-end;
+{ Temporary on master don't warn about deprecated GetView / SetView usage.
+  This will disappear with merge from new-cameras. }
+{$warnings off}
 
 { TCastle2DNavigation -------------------------------------------------------- }
 
@@ -2498,6 +2512,13 @@ begin
     inherited Assign(Source);
 end;
 
+procedure TCastleCamera.GetWorldView(out APos, ADir, AUp: TVector3);
+begin
+  {.$warnings off} // for now, this calls deprecated; in new-cameras branch this does something else
+  GetView(APos, ADir, AUp);
+  {.$warnings on}
+end;
+
 procedure TCastleCamera.GetView(out APos, ADir, AUp: TVector3);
 begin
   APos := FPosition;
@@ -2536,6 +2557,13 @@ procedure TCastleCamera.SetView(const APos, ADir, AUp, AGravityUp: TVector3;
 begin
   GravityUp := AGravityUp;
   SetView(APos, ADir, AUp, AdjustUp);
+end;
+
+procedure TCastleCamera.SetWorldView(const APos, ADir, AUp: TVector3; const AdjustUp: boolean);
+begin
+  {.$warnings off} // for now, this calls deprecated; in new-cameras branch this does something else
+  SetView(APos, ADir, AUp, AdjustUp);
+  {.$warnings on}
 end;
 
 procedure TCastleCamera.SetGravityUp(const Value: TVector3);
@@ -2878,21 +2906,6 @@ begin
   Result := (InternalViewport as TCastleViewport).Camera;
 end;
 
-procedure TCastleNavigation.SetInput(const Value: TNavigationInputs);
-begin
-  FInput := Value;
-end;
-
-procedure TCastleNavigation.SetRadius(const Value: Single);
-begin
-  FRadius := Value;
-end;
-
-procedure TCastleNavigation.SetModelBox(const B: TBox3D);
-begin
-  FModelBox := B;
-end;
-
 procedure TCastleNavigation.Ray(const WindowPosition: TVector2;
   const Projection: TProjection;
   out RayOrigin, RayDirection: TVector3);
@@ -2988,16 +3001,17 @@ end;
 procedure TCastleNavigation.SetIgnoreAllInputs(const Value: boolean);
 begin
   if Value then
-    Input := [] else
+    Input := []
+  else
     Input := DefaultInput;
 end;
 
 function TCastleNavigation.ReallyEnableMouseDragging: boolean;
 begin
-  Result := (niMouseDragging in Input) and
+  Result := (niMouseDragging in UsingInput) and
     { Is mouse dragging allowed by viewport.
       This is an additional condition to enable mouse dragging,
-      above the existing niMouseDragging in Input.
+      above the existing niMouseDragging in UsingInput.
       It is used to prevent camera navigation by
       dragging when we already drag a 3D item (like X3D TouchSensor). }
     ( (InternalViewport = nil) or
@@ -3067,11 +3081,14 @@ begin
     inherited Assign(Source);
 end;
 
-function TCastleNavigation.GetExists: boolean;
+function TCastleNavigation.UsingInput: TNavigationInputs;
 begin
-  Result := (inherited GetExists) and
-    ( (InternalViewport = nil) or
-      (not (InternalViewport as TCastleViewport).Items.Paused) );
+  { Behave like Input=[] on a paused viewport }
+  if (InternalViewport <> nil) and
+     ((InternalViewport as TCastleViewport).Items.Paused) then
+    Result := []
+  else
+    Result := Input;
 end;
 
 procedure TCastleNavigation.GetView(out APos, ADir, AUp: TVector3);
@@ -3395,7 +3412,7 @@ begin
     V.Rotations.LazyNormalizeMe;
   end;
 
-  if HandleInput and (niNormal in Input) then
+  if HandleInput and (niNormal in UsingInput) then
   begin
     if GoodModelBox.IsEmptyOrZero then
       MoveChange := KeysMoveSpeed * SecondsPassed
@@ -3447,7 +3464,7 @@ begin
   ExamineVectors := V;
 
   { process things that do not set ExamineVectors }
-  if HandleInput and (niNormal in Input) then
+  if HandleInput and (niNormal in UsingInput) then
   begin
     if Input_ScaleLarger.IsPressed(Container) then
     begin
@@ -3498,7 +3515,7 @@ var
   Size: Single;
   MoveSize: Double;
 begin
-  if not (ni3dMouse in Input) then Exit(false);
+  if not (ni3dMouse in UsingInput) then Exit(false);
   if not MoveEnabled then Exit(false);
   if GoodModelBox.IsEmptyOrZero then Exit(false);
   Result := true;
@@ -3523,7 +3540,7 @@ var
   RotationSize: Double;
   V: TExamineVectors;
 begin
-  if not (ni3dMouse in Input) then Exit(false);
+  if not (ni3dMouse in UsingInput) then Exit(false);
   if not RotationEnabled then Exit(false);
   Result := true;
 
@@ -3658,10 +3675,10 @@ begin
      (ModifiersDown(Container.Pressed) <> []) then
     Exit;
 
-  if (niGesture in Input) and FPinchGestureRecognizer.Press(Event) then
+  if (niGesture in UsingInput) and FPinchGestureRecognizer.Press(Event) then
     Exit(ExclusiveEvents);
 
-  if not (niNormal in Input) then Exit;
+  if not (niNormal in UsingInput) then Exit;
 
   if Event.EventType <> itMouseWheel then
   begin
@@ -3702,7 +3719,7 @@ begin
   Result := inherited;
   if Result then Exit;
 
-  if (niGesture in Input) and FPinchGestureRecognizer.Release(Event) then
+  if (niGesture in UsingInput) and FPinchGestureRecognizer.Release(Event) then
     Exit(ExclusiveEvents);
 end;
 
@@ -3838,7 +3855,7 @@ begin
   else
     Dpi := DefaultDpi;
 
-  if (niGesture in Input) and FPinchGestureRecognizer.Motion(Event, Dpi) then
+  if (niGesture in UsingInput) and FPinchGestureRecognizer.Motion(Event, Dpi) then
     Exit(ExclusiveEvents);
 
   MoveDivConst := Dpi;
@@ -3962,13 +3979,14 @@ function TCastleExamineNavigation.GetInput_RotateZDec: TInputShortcut; begin Res
 
 function TCastleExamineNavigation.GetMouseNavigation: boolean;
 begin
-  Result := niMouseDragging in Input;
+  Result := niMouseDragging in UsingInput;
 end;
 
 procedure TCastleExamineNavigation.SetMouseNavigation(const Value: boolean);
 begin
   if Value then
-    Input := Input + [niMouseDragging] else
+    Input := Input + [niMouseDragging]
+  else
     Input := Input - [niMouseDragging];
 end;
 
@@ -4046,7 +4064,7 @@ function TCastleMouseLookNavigation.Motion(const Event: TInputMotion): boolean;
   var
     MouseChange: TVector2;
   begin
-    MouseChange := Container.MouseLookDelta(Event);
+    MouseChange := Container.MouseLookDelta(Event, RenderRect);
 
     if not MouseChange.IsPerfectlyZero then
     begin
@@ -4063,8 +4081,7 @@ begin
   Result := inherited;
   if Result or (Event.FingerIndex <> 0) then Exit;
 
-  if (niNormal in Input) and
-    UsingMouseLook and
+  if UsingMouseLook and
     Container.Focused and
     ContainerSizeKnown and
     (not Camera.Animation) then
@@ -4076,7 +4093,7 @@ end;
 
 function TCastleMouseLookNavigation.UsingMouseLook: Boolean;
 begin
-  Result := MouseLook and not CastleDesignMode;
+  Result := MouseLook and (niNormal in UsingInput) and not CastleDesignMode;
 end;
 
 { TCastleWalkNavigation ---------------------------------------------------------------- }
@@ -5093,6 +5110,13 @@ var
 begin
   inherited;
 
+  { update Cursor every frame, in case InternalViewport.Paused changed
+    (which changes UsingInput and UsingMouseLook) }
+  if UsingMouseLook then
+    Cursor := mcForceNone
+  else
+    Cursor := mcDefault;
+
   { Do not handle keys or gravity etc. }
   if Camera.Animation then Exit;
 
@@ -5103,7 +5127,7 @@ begin
 
   if HandleInput then
   begin
-    if niNormal in Input then
+    if niNormal in UsingInput then
     begin
       HandleInput := not ExclusiveEvents;
       FIsCrouching := Gravity and Input_Crouch.IsPressed(Container);
@@ -5290,7 +5314,7 @@ begin
     Exit;
   end;
 
-  if (not (niNormal in Input)) or Camera.Animation then Exit(false);
+  if (not (niNormal in UsingInput)) or Camera.Animation then Exit(false);
 
   if Input_GravityUp.IsEvent(Event) then
   begin
@@ -5309,7 +5333,7 @@ function TCastleWalkNavigation.SensorTranslation(const X, Y, Z, Length: Double;
 var
   MoveSize: Double;
 begin
-  if not (ni3dMouse in Input) then Exit(false);
+  if not (ni3dMouse in UsingInput) then Exit(false);
   Result := true;
 
   MoveSize := Length * SecondsPassed / 5000;
@@ -5343,7 +5367,7 @@ function TCastleWalkNavigation.SensorRotation(const X, Y, Z, Angle: Double;
 const
   SpeedSensor = 2;
 begin
-  if not (ni3dMouse in Input) then Exit(false);
+  if not (ni3dMouse in UsingInput) then Exit(false);
   Result := true;
 
   if Abs(X) > 0.4 then      { tilt forward / backward }

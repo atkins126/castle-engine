@@ -120,7 +120,9 @@ type
       https://www.khronos.org/registry/OpenGL-Refpages/es3.0/html/glUniform.xhtml
     }
     Position: TVector3;
+    Radius: Single;
     SpotCosCutoff: Single;
+    SpotBeamWidth: Single;
     SpotDirection: TVector3;
     SpotExponent: Single;
     SpotCutoff: Single;
@@ -405,6 +407,7 @@ type
     FBumpMapping: TBumpMapping;
     FNormalMapTextureCoordinatesId: Cardinal;
     FNormalMapTextureUnit: Cardinal;
+    FNormalMapScale: Single;
     FHeightMapInAlpha: boolean;
     FHeightMapScale: Single;
     FSurfaceTextureShaders: array [TSurfaceTexture] of TSurfaceTextureShader;
@@ -444,6 +447,9 @@ type
     ColorPerVertexType: TColorPerVertexType;
     ColorPerVertexMode: TColorMode;
 
+    FShapeBoundingBoxInWorldKnown: Boolean;
+    FShapeBoundingBoxInWorld: TBox3D;
+
     procedure EnableEffects(Effects: TMFNode;
       const Code: TShaderSource = nil;
       const ForwardDeclareInFinalShader: boolean = false); overload;
@@ -476,12 +482,14 @@ type
     { Uniforms that will be set on this shader every frame (not just once after linking). }
     DynamicUniforms: TDynamicUniformList;
 
-    { We use a callback, instead of storing TBox3D result, because
-      1. in many cases, we will not need to call it (so we don't need to recalculate
-         TShape.LocalBoundingBox every frame for a changing shape),
-      2. if it can be cached, TShape.LocalBoundingBox already implements
-         a proper cache mechanism. }
-    ShapeBoundingBox: TBoundingBoxEvent;
+    { We require a callback, instead of always requiring TBox3D result, because
+      in many cases, we will not need to call it (so we don't need to recalculate
+      TShape.LocalBoundingBox every frame for a changing shape).
+
+      Should return bbox in scene coordinate system (not in world coordinate system).
+
+      Use ShapeBoundingBoxInWorld to get the box easily. }
+    ShapeBoundingBoxInSceneEvent: TBoundingBoxEvent;
 
     { Camera * scene transformation (without the shape transformation).
 
@@ -492,6 +500,9 @@ type
       the OpenGL modelview matrix contains also shape transformation,
       so it's different than SceneModelView. }
     SceneModelView: TMatrix4;
+
+    { Scene transformation (without the shape transformation). }
+    SceneTransform: TMatrix4;
 
     { Assign this if you used EnableTexGen with tgMirrorPlane
       to setup correct uniforms. }
@@ -599,6 +610,7 @@ type
     procedure EnableAlphaTest(const AlphaCutoff: Single);
     procedure EnableBumpMapping(const BumpMapping: TBumpMapping;
       const NormalMapTextureUnit, NormalMapTextureCoordinatesId: Cardinal;
+      const NormalMapScale: Single;
       const HeightMapInAlpha: boolean; const HeightMapScale: Single);
     procedure EnableSurfaceTexture(const SurfaceTexture: TSurfaceTexture;
       const TextureUnit, TextureCoordinatesId: Cardinal;
@@ -650,6 +662,9 @@ type
 
     { Shader needs normals, for lighting calculation or tex coord generation. }
     function NeedsNormals: Boolean;
+
+    { Current shape bbox, in world coordinates. }
+    function ShapeBoundingBoxInWorld: TBox3D;
   end;
 
 implementation
@@ -932,45 +947,19 @@ begin
     if Node is TSpotLightNode_1 then
     begin
       Define(ldTypeSpot);
-      if TSpotLightNode_1(Node).SpotExponent <> 0 then
-        Define(ldHasSpotExponent);
+      Define(ldHasSpotExponent);
     end else
     if Node is TSpotLightNode then
     begin
       Define(ldTypeSpot);
-      if TSpotLightNode(Node).FdBeamWidth.Value <
-         TSpotLightNode(Node).FdCutOffAngle.Value then
-      begin
-        Define(ldHasBeamWidth);
-        LightUniformName1 := 'castle_LightSource%dBeamWidth';
-        LightUniformValue1 := TSpotLightNode(Node).FdBeamWidth.Value;
-        Hash.AddFloat(LightUniformValue1, 2179);
-      end;
+      Define(ldHasBeamWidth);
     end;
 
     if TAbstractPositionalLightNode(Node).HasAttenuation then
       Define(ldHasAttenuation);
 
-    if TAbstractPositionalLightNode(Node).HasRadius and
-      { Do not activate per-pixel checking of light radius,
-        if we know (by bounding box test below)
-        that the whole shape is completely within radius. }
-      (Shader.ShapeBoundingBox().PointMaxDistance(Light^.Location, -1) > Light^.Radius) then
-    begin
+    if TAbstractPositionalLightNode(Node).HasRadius then
       Define(ldHasRadius);
-      LightUniformName2 := 'castle_LightSource%dRadius';
-      LightUniformValue2 := Light^.Radius;
-      { Uniform value comes from this Node's property,
-        so this cannot be shared with other light nodes,
-        that may have not synchronized radius value.
-
-        (Note: We could instead add radius value to the hash.
-        Then this shader could be shared between all light nodes with
-        the same radius value --- however, if radius changed,
-        then the shader would have to be recreated, even if the same
-        light node was used.) }
-      Hash.AddPointer(Node);
-    end;
   end;
   if Node.FdAmbientIntensity.Value <> 0 then
     Define(ldHasAmbient);
@@ -1092,7 +1081,7 @@ begin
     Position := LightToEyeSpace^ * Light^.Position;
 
     { Note that we cut off last component of Node.Position,
-      we don't need it. #defines tell the shader whether we deal with direcional
+      we don't need it. #defines tell the shader whether we deal with directional
       or positional light. }
     Uniforms.SetUniform('castle_LightSource%dPosition', Uniforms.Position,
       Position.XYZ);
@@ -1100,6 +1089,13 @@ begin
     if Node is TAbstractPositionalLightNode then
     begin
       LiPos := TAbstractPositionalLightNode(Node);
+
+      if LiPos.HasRadius then
+      begin
+        Uniforms.SetUniform('castle_LightSource%dRadius', Uniforms.Radius,
+          Approximate3DScale(LightToEyeSpace^) * Light^.Radius);
+      end;
+
       if LiPos is TSpotLightNode_1 then
       begin
         LiSpot1 := TSpotLightNode_1(Node);
@@ -1107,11 +1103,8 @@ begin
           LiSpot1.SpotCosCutoff);
         Uniforms.SetUniform('castle_LightSource%dSpotDirection', Uniforms.SpotDirection,
           LightToEyeSpace^.MultDirection(Light^.Direction));
-        if LiSpot1.SpotExponent <> 0 then
-        begin
-          Uniforms.SetUniform('castle_LightSource%dSpotExponent', Uniforms.SpotExponent,
-            LiSpot1.SpotExponent);
-        end;
+        Uniforms.SetUniform('castle_LightSource%dSpotExponent', Uniforms.SpotExponent,
+          LiSpot1.SpotExponent);
       end else
       if LiPos is TSpotLightNode then
       begin
@@ -1120,11 +1113,10 @@ begin
           LiSpot.SpotCosCutoff);
         Uniforms.SetUniform('castle_LightSource%dSpotDirection', Uniforms.SpotDirection,
           LightToEyeSpace^.MultDirection(Light^.Direction));
-        if LiSpot.FdBeamWidth.Value < LiSpot.FdCutOffAngle.Value then
-        begin
-          Uniforms.SetUniform('castle_LightSource%dSpotCutoff', Uniforms.SpotCutoff,
-            LiSpot.FdCutOffAngle.Value);
-        end;
+        Uniforms.SetUniform('castle_LightSource%dBeamWidth', Uniforms.SpotBeamWidth,
+          LiSpot.FdBeamWidth.Value);
+        Uniforms.SetUniform('castle_LightSource%dSpotCutoff', Uniforms.SpotCutoff,
+          LiSpot.FdCutOffAngle.Value);
       end;
 
       if LiPos.HasAttenuation then
@@ -2042,6 +2034,7 @@ begin
   FBumpMapping := Low(TBumpMapping);
   FNormalMapTextureUnit := 0;
   FNormalMapTextureCoordinatesId := 0;
+  FNormalMapScale := 1;
   FHeightMapInAlpha := false;
   FHeightMapScale := 0;
   for SurfaceTexture := Low(TSurfaceTexture) to High(TSurfaceTexture) do
@@ -2057,7 +2050,8 @@ begin
   ColorPerVertexType := ctNone;
   ColorPerVertexMode := cmReplace;
   FPhongShading := false;
-  ShapeBoundingBox := nil;
+  ShapeBoundingBoxInSceneEvent := nil;
+  FShapeBoundingBoxInWorldKnown := false;
   Material := nil;
   DynamicUniforms.Count := 0;
   TextureMatrix.Count := 0;
@@ -2226,6 +2220,10 @@ begin
     if PlugName = 'texture_coord_shift' then
       PlugDirectly(Source[stFragment], 0, '/* PLUG-DECLARATIONS */',
         '#define HAS_TEXTURE_COORD_SHIFT', false);
+    if PlugName = 'texture_apply' then
+      WritelnWarning('Using PLUG_texture_apply is deprecated. Upgrade to ' +
+        '1. PLUG_main_texture_apply (to do something after main texture application; but remember that it happens *before* lighting application in case of Phong shading), ' +
+        '2. or PLUG_fragment_modify (to do final fragment color adjustment)');
 
     { PlugName is not needed below to make this unique,
       but it makes reading shader code easier. }
@@ -2720,10 +2718,12 @@ var
   end;
 
 var
-  BumpMappingUniformName1: string;
-  BumpMappingUniformValue1: LongInt;
-  BumpMappingUniformName2: string;
-  BumpMappingUniformValue2: Single;
+  HasBumpMappingUniform_NormalMapTextureUnit: Boolean;
+  BumpMappingUniform_NormalMapTextureUnit: LongInt;
+  HasBumpMappingUniform_NormalMapScale: Boolean;
+  BumpMappingUniform_NormalMapScale: Single;
+  HasBumpMappingUniform_HeightMapScale: Boolean;
+  BumpMappingUniform_HeightMapScale: Single;
 
   procedure EnableShaderBumpMapping;
   var
@@ -2739,8 +2739,11 @@ var
     Plug(stVertex  , VertexShader);
     Plug(stFragment, FragmentShader);
 
-    BumpMappingUniformName1 := 'castle_normal_map';
-    BumpMappingUniformValue1 := FNormalMapTextureUnit;
+    HasBumpMappingUniform_NormalMapTextureUnit := true;
+    BumpMappingUniform_NormalMapTextureUnit := FNormalMapTextureUnit;
+
+    HasBumpMappingUniform_NormalMapScale := true;
+    BumpMappingUniform_NormalMapScale := FNormalMapScale;
 
     if FHeightMapInAlpha and (FBumpMapping >= bmParallax) then
     begin
@@ -2753,8 +2756,8 @@ var
       Plug(stVertex  , VertexShader);
       Plug(stFragment, FragmentShader);
 
-      BumpMappingUniformName2 := 'castle_parallax_bm_scale';
-      BumpMappingUniformValue2 := FHeightMapScale;
+      HasBumpMappingUniform_HeightMapScale := true;
+      BumpMappingUniform_HeightMapScale := FHeightMapScale;
 
       if (FBumpMapping >= bmSteepParallaxShadowing) and (LightShaders.Count > 0) then
       begin
@@ -2906,13 +2909,17 @@ var
                               TTextureShader(TextureShaders[I]).UniformValue);
     end;
 
-    if BumpMappingUniformName1 <> '' then
-      AProgram.SetUniform(BumpMappingUniformName1,
-                          BumpMappingUniformValue1);
+    if HasBumpMappingUniform_NormalMapTextureUnit then
+      AProgram.SetUniform('castle_normal_map',
+        BumpMappingUniform_NormalMapTextureUnit);
 
-    if BumpMappingUniformName2 <> '' then
-      AProgram.SetUniform(BumpMappingUniformName2,
-                          BumpMappingUniformValue2);
+    if HasBumpMappingUniform_NormalMapScale then
+      AProgram.SetUniform('castle_normalScale',
+        BumpMappingUniform_NormalMapScale);
+
+    if HasBumpMappingUniform_HeightMapScale then
+      AProgram.SetUniform('castle_parallax_bm_scale',
+        BumpMappingUniform_HeightMapScale);
 
     for SurfaceTexture := Low(TSurfaceTexture) to High(TSurfaceTexture) do
       if FSurfaceTextureShaders[SurfaceTexture].Enable then
@@ -2980,6 +2987,10 @@ var
   GeometryInputSize: string;
   I: Integer;
 begin
+  HasBumpMappingUniform_NormalMapTextureUnit := false;
+  HasBumpMappingUniform_NormalMapScale := false;
+  HasBumpMappingUniform_HeightMapScale := false;
+
   EnableLightingModel; // do this early, as later EnableLights may assume it's done
   RequireTextureCoordinateForSurfaceTextures;
   EnableTextures;
@@ -3494,11 +3505,13 @@ end;
 
 procedure TShader.EnableBumpMapping(const BumpMapping: TBumpMapping;
   const NormalMapTextureUnit, NormalMapTextureCoordinatesId: Cardinal;
+  const NormalMapScale: Single;
   const HeightMapInAlpha: boolean; const HeightMapScale: Single);
 begin
   FBumpMapping := BumpMapping;
   FNormalMapTextureUnit := NormalMapTextureUnit;
   FNormalMapTextureCoordinatesId := NormalMapTextureCoordinatesId;
+  FNormalMapScale := NormalMapScale;
   FHeightMapInAlpha := HeightMapInAlpha;
   FHeightMapScale := HeightMapScale;
 
@@ -3512,6 +3525,7 @@ begin
       383 * Ord(FHeightMapInAlpha)
     );
     FCodeHash.AddFloat(FHeightMapScale, 2203);
+    FCodeHash.AddFloat(FNormalMapScale, 2281);
   end;
 end;
 
@@ -3796,6 +3810,16 @@ function TShader.NeedsNormals: Boolean;
 begin
   // optimize lmUnlit: no need for normals data
   Result := (LightingModel <> lmUnlit) or NeedsNormalsForTexGen;
+end;
+
+function TShader.ShapeBoundingBoxInWorld: TBox3D;
+begin
+  if not FShapeBoundingBoxInWorldKnown then
+  begin
+    FShapeBoundingBoxInWorldKnown := true;
+    FShapeBoundingBoxInWorld := ShapeBoundingBoxInSceneEvent().Transform(SceneTransform);
+  end;
+  Result := FShapeBoundingBoxInWorld;
 end;
 
 end.

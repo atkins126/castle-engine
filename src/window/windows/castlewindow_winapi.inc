@@ -85,10 +85,6 @@ private
   VK_BackQuote,
   VK_BackSlash: Byte;
 
-  {$ifdef CASTLE_ENGINE_PLUGIN}
-  PluginWindow: TNPWindow;
-  {$endif}
-
   function WindowProc(uMsg: UINT; wParm: WPARAM; lParm: LPARAM): LRESULT;
 
   { convert virtual key code (VK_xxx) to TKey. Returns keyNone if no conversion
@@ -1026,8 +1022,9 @@ procedure TCastleWindow.OpenBackend;
   procedure InitializeDpi;
   begin
     FDpi := GetDeviceCaps(h_Dc, LOGPIXELSX);
-    WritelnLog('WinAPI', 'Dots (pixels) per inch is %f (%f * default %f)',
-      [FDpi, FDpi / DefaultDpi, DefaultDpi]);
+    // Too verbose by default, UpdateUIScale will show it if UIScaling is usDpiScale.
+    // WritelnLog('WinAPI', 'Dots (pixels) per inch is %f (%f * default %f)',
+    //   [FDpi, FDpi / DefaultDpi, DefaultDpi]);
   end;
 
   { Request WinAPI to send DBT_DEVICEARRIVAL and DBT_DEVICEREMOVECOMPLETE events
@@ -1065,22 +1062,11 @@ procedure TCastleWindow.OpenBackend;
   end;
 
 var
-  {$ifndef CASTLE_ENGINE_PLUGIN}
   dwExStyle, dwStyle: dword;
   WindowRect: TRect;
   H_Menu: HMenu;
-  {$endif}
   ClientRect: TRect;
 begin
-  {$ifdef CASTLE_ENGINE_PLUGIN}
-  FLeft := PluginWindow.X;
-  FTop := PluginWindow.Y;
-  FWidth := PluginWindow.Width;
-  FHeight := PluginWindow.Height;
-  Fullscreen := false;
-
-  H_wnd := HWND(PluginWindow.Window);
-  {$else}
   { optionally hide mouse in FullScreem,
     set dwStyle and dwExStyle for our window }
   if FullScreen then
@@ -1161,7 +1147,6 @@ begin
     windowRect.right-windowRect.left, windowRect.Bottom-windowRect.top,
     0 { no parent window }, H_Menu, hInstance,
     nil { don't pass anything to WM_CREATE } );
-  {$endif}
 
   Check(h_Wnd <> 0, 'Creating window (H_wnd) failed');
 
@@ -1194,14 +1179,12 @@ begin
     ze "dziala kiedy wywolamy Invalidate". }
   Application.OpenWindowsAdd(Self);
 
-  {$ifndef CASTLE_ENGINE_PLUGIN}
   if Visible then
   begin
     ShowWindow(h_Wnd, SW_SHOW);
     SetForegroundWindow(h_Wnd);
     SetFocus(h_Wnd);
   end;
-  {$endif}
 
   OSCheck(GetClientRect(h_Wnd, ClientRect), 'GetClientRect');
 
@@ -1310,10 +1293,8 @@ begin
     if (h_Dc <> 0) and (ReleaseDC(h_Wnd, h_Dc) = 0) then
       WritelnWarning('WinAPI', 'Releasing device context (ReleaseDC) failed.');
     h_Dc := 0;
-    {$ifndef CASTLE_ENGINE_PLUGIN}
     if (h_Wnd <> 0) and (not DestroyWindow(h_Wnd))then
       WritelnWarning('WinAPI', 'Destroying window (DestroyWindow) failed.');
-    {$endif}
     h_Wnd := 0;
   finally InCloseBackend := false; end;
 end;
@@ -1453,13 +1434,13 @@ begin
     in the form 'subdir1/file' or './subdir1/file' (maybe it does not understand
     that those paths are relative to current dir ??), so I'm always expanding paths. }
   FilePath := ExpandFilePath(FilePath);
-  Struct.lpstrInitialDir := PWideCharOrNil(FilePath);
+  Struct.lpstrInitialDir := PWideCharOrNil(StringToUtf16(FilePath));
 
  { tests:
    InfoWrite('current dir : "' + GetCurrentDir + '"');
    InfoWrite('dialog box InitialDir : "' + FilePath + '"');}
 
-  Struct.lpstrTitle := PWideCharOrNil(Title);
+  Struct.lpstrTitle := PWideCharOrNil(StringToUtf16(Title));
   Struct.Flags := OFN_NOCHANGEDIR or OFN_HIDEREADONLY;
   if OpenDialog then
     Struct.Flags := Struct.Flags or OFN_FILEMUSTEXIST else
@@ -1467,7 +1448,7 @@ begin
 
   if FileFilters <> nil then
   begin
-    Struct.lpstrFilter := PWideCharOrNil(MakeStrFilter(FileFilters));
+    Struct.lpstrFilter := PWideCharOrNil(StringToUtf16(MakeStrFilter(FileFilters)));
     Struct.nFilterIndex := FileFilters.DefaultFilter + 1;
 
     if not OpenDialog then
@@ -1520,7 +1501,7 @@ begin
         to ignore extension then; either way, both exits are wrong, since user can very
         easily save a file with data format and extension not related).
       }
-      CurrentFileNameExt := ExtractFileExt(FileNameBuffer);
+      CurrentFileNameExt := ExtractFileExt(Utf16ToString(FileNameBuffer));
       CurrentFormatIndex := SearchFirstPatternWithExtension(CurrentFileNameExt);
       if CurrentFormatIndex <> -1 then
       begin
@@ -1549,7 +1530,7 @@ begin
 
           Also note that unregistered extensions are treated somewhat differently.
           Unfortunately, lpstrDefExt will append then, instead of leaving filename alone. }
-        Struct.lpstrDefExt := PWideCharOrNil(SEnding(CurrentFileNameExt, 2));
+        Struct.lpstrDefExt := PWideCharOrNil(StringToUtf16(SEnding(CurrentFileNameExt, 2)));
       end;
     end;
   end;
@@ -1562,7 +1543,7 @@ begin
   finally Mode.Free end;
 
   if Result then
-    FileName := widestring(FileNameBuffer) else
+    FileName := Utf16ToString(FileNameBuffer) else
   begin
     if CommDlgExtendedError <> 0 then
       raise Exception.CreateFmt('GetOpen/SaveFileName failed with error %d',

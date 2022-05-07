@@ -64,8 +64,10 @@ type
     @seealso TGenericVector3 }
   TGenericVector2 = packed record
   public
+    const
+      Count = 2;
     type
-      TIndex = 0..1;
+      TIndex = 0..Count - 1;
   strict private
     function GetItems(const Index: TIndex): TGenericScalar; {$ifdef INLINE_GENERIC_VECTORS}inline;{$endif}
     procedure SetItems(const Index: TIndex; const Value: TGenericScalar); {$ifdef INLINE_GENERIC_VECTORS}inline;{$endif}
@@ -78,7 +80,7 @@ type
       We discourage using it. Use X, Y to change vector components.
       Use AsArray to access it by index, read-only. }
     property Data [const Index: TIndex]: TGenericScalar read GetItems write SetItems;
-      deprecated 'use instead X, Y fields; modifying a temporary record value is a trap, e.g. this is not reliable: "Scene.TranslationXY.Data[0] := Scene.TranslationXY.Data[0] + 1"';
+      {$ifdef FPC}deprecated 'use instead X, Y fields; modifying a temporary record value is a trap, e.g. this is not reliable: "Scene.TranslationXY.Data[0] := Scene.TranslationXY.Data[0] + 1"';{$endif}
 
     { @exclude
       Access (get, set) vector components by index.
@@ -114,7 +116,7 @@ type
     function ToRawString: string;
 
     property Items [const Index: TIndex]: TGenericScalar read GetItems write SetItems;
-      deprecated 'use instead X, Y fields; modifying a temporary record value is a trap, e.g. this is not reliable "Scene.TranslationXY[0] := Scene.TranslationXY[0] + 1"';
+      {$ifdef FPC}deprecated 'use instead X, Y fields; modifying a temporary record value is a trap, e.g. this is not reliable "Scene.TranslationXY[0] := Scene.TranslationXY[0] + 1"';{$endif}
 
     function Normalize: TGenericVector2; {$ifdef INLINE_GENERIC_VECTORS}inline;{$endif}
     procedure NormalizeMe; {$ifdef INLINE_GENERIC_VECTORS}inline;{$endif}
@@ -180,8 +182,10 @@ type
   }
   TGenericVector3 = packed record
   public
+    const
+      Count = 3;
     type
-      TIndex = 0..2;
+      TIndex = 0..Count - 1;
   strict private
     function GetItems(const Index: TIndex): TGenericScalar; {$ifdef INLINE_GENERIC_VECTORS}inline;{$endif}
     procedure SetItems(const Index: TIndex; const Value: TGenericScalar); {$ifdef INLINE_GENERIC_VECTORS}inline;{$endif}
@@ -194,7 +198,7 @@ type
       We discourage using it. Use X, Y, Z to change vector components.
       Use AsArray to access it by index, read-only. }
     property Data [const Index: TIndex]: TGenericScalar read GetItems write SetItems;
-      deprecated 'use instead X, Y, Z fields; modifying a temporary record value is a trap, e.g. this is not reliable: "Scene.Translation.Data[0] := Scene.Translation.Data[0] + 1"';
+      {$ifdef FPC}deprecated 'use instead X, Y, Z fields; modifying a temporary record value is a trap, e.g. this is not reliable: "Scene.Translation.Data[0] := Scene.Translation.Data[0] + 1"';{$endif}
 
     { @exclude
       Access (get, set) vector components by index.
@@ -230,7 +234,7 @@ type
     function ToRawString: string;
 
     property Items [const Index: TIndex]: TGenericScalar read GetItems write SetItems;
-      deprecated 'use instead X, Y, Z fields; modifying a temporary record value is a trap, e.g. this is not reliable "Scene.Translation[0] := Scene.Translation[0] + 1"';
+      {$ifdef FPC}deprecated 'use instead X, Y, Z fields; modifying a temporary record value is a trap, e.g. this is not reliable "Scene.Translation[0] := Scene.Translation[0] + 1"';{$endif}
 
     function Normalize: TGenericVector3; {$ifdef INLINE_GENERIC_VECTORS}inline;{$endif}
     procedure NormalizeMe; {$ifdef INLINE_GENERIC_VECTORS}inline;{$endif}
@@ -323,8 +327,10 @@ type
     @seealso TGenericVector3 }
   TGenericVector4 = packed record
   public
+    const
+      Count = 4;
     type
-      TIndex = 0..3;
+      TIndex = 0..Count - 1;
   strict private
     function GetItems(const Index: TIndex): TGenericScalar; {$ifdef INLINE_GENERIC_VECTORS}inline;{$endif}
     procedure SetItems(const Index: TIndex; const Value: TGenericScalar); {$ifdef INLINE_GENERIC_VECTORS}inline;{$endif}
@@ -347,7 +353,7 @@ type
       We discourage using it. Use X, Y, Z, W to change vector components.
       Use AsArray to access it by index, read-only. }
     property Data [const Index: TIndex]: TGenericScalar read GetItems write SetItems;
-      deprecated 'use instead X, Y, Z, W fields; modifying a temporary record value is a trap, e.g. this is not reliable: "Scene.Rotation.Data[0] := Scene.Rotation.Data[0] + 1"';
+      {$ifdef FPC}deprecated 'use instead X, Y, Z, W fields; modifying a temporary record value is a trap, e.g. this is not reliable: "Scene.Rotation.Data[0] := Scene.Rotation.Data[0] + 1"';{$endif}
 
     { @exclude
       Access (get, set) vector components by index.
@@ -383,7 +389,7 @@ type
     function ToRawString: string;
 
     property Items [const Index: TIndex]: TGenericScalar read GetItems write SetItems;
-      deprecated 'use instead X, Y, Z, W fields; modifying a temporary record value is a trap, e.g. this is not reliable "Scene.Rotation[0] := Scene.Rotation[0] + 1"';
+      {$ifdef FPC}deprecated 'use instead X, Y, Z, W fields; modifying a temporary record value is a trap, e.g. this is not reliable "Scene.Rotation[0] := Scene.Rotation[0] + 1"';{$endif}
 
     function Length: TGenericScalar; {$ifdef INLINE_GENERIC_VECTORS}inline;{$endif}
 
@@ -542,8 +548,11 @@ type
     function GetColumns(const AColumn: TIndex): TGenericVector3; {$ifdef INLINE_GENERIC_VECTORS}inline;{$endif}
     procedure SetColumns(const AColumn: TIndex; const Value: TGenericVector3); {$ifdef INLINE_GENERIC_VECTORS}inline;{$endif}
   public
+    type
+      TIndexArray = array[TIndex] of TGenericScalar;
     var
-      Data: array [TIndex, TIndex] of TGenericScalar;
+      //Data: array [TIndex, TIndex] of TGenericScalar;
+      Data: array [TIndex] of TIndexArray;
 
     class operator {$ifdef FPC}+{$else}Add{$endif} (const A, B: TGenericMatrix3): TGenericMatrix3; {$ifdef INLINE_GENERIC_VECTORS}inline;{$endif}
     class operator {$ifdef FPC}-{$else}Subtract{$endif} (const A, B: TGenericMatrix3): TGenericMatrix3; {$ifdef INLINE_GENERIC_VECTORS}inline;{$endif}
@@ -620,8 +629,11 @@ type
       keep it fast. }
     procedure RaiseDirectionTransformedResultInvalid(const Divisor: TGenericScalar);
   public
+    type
+      TIndexArray = array[TIndex] of TGenericScalar;
     var
-      Data: array [TIndex, TIndex] of TGenericScalar;
+      //Data: array [TIndex, TIndex] of TGenericScalar;
+      Data: array [TIndex] of TIndexArray;
 
     class operator {$ifdef FPC}+{$else}Add{$endif} (const A, B: TGenericMatrix4): TGenericMatrix4; {$ifdef INLINE_GENERIC_VECTORS}inline;{$endif}
     class operator {$ifdef FPC}-{$else}Subtract{$endif} (const A, B: TGenericMatrix4): TGenericMatrix4; {$ifdef INLINE_GENERIC_VECTORS}inline;{$endif}
@@ -787,6 +799,10 @@ begin
   case Index of
     0: Result := X;
     1: Result := Y;
+    { We use here numbers, not strings, for internal errors.
+      Reason: avoid implicit try..finally clause,
+      this method must be fast. }
+    {$ifndef FPC} else raise EInternalError.Create(202202111); {$endif}
   end;
 end;
 
@@ -795,6 +811,7 @@ begin
   case Index of
     0: X := Value;
     1: Y := Value;
+    {$ifndef FPC} else raise EInternalError.Create(202202112); {$endif}
   end;
 end;
 
@@ -995,6 +1012,7 @@ begin
     0: Result := X;
     1: Result := Y;
     2: Result := Z;
+    {$ifndef FPC} else raise EInternalError.Create(202202113); {$endif}
   end;
 end;
 
@@ -1004,6 +1022,7 @@ begin
     0: X := Value;
     1: Y := Value;
     2: Z := Value;
+    {$ifndef FPC} else raise EInternalError.Create(202202114); {$endif}
   end;
 end;
 
@@ -1255,6 +1274,7 @@ begin
     1: Result := Y;
     2: Result := Z;
     3: Result := W;
+    {$ifndef FPC} else raise EInternalError.Create(202202115); {$endif}
   end;
 end;
 
@@ -1265,6 +1285,7 @@ begin
     1: Y := Value;
     2: Z := Value;
     3: W := Value;
+    {$ifndef FPC} else raise EInternalError.Create(202202116); {$endif}
   end;
 end;
 

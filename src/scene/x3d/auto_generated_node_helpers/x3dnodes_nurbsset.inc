@@ -1,6 +1,6 @@
 { -*- buffer-read-only: t -*-
 
-  Copyright 2015-2021 Michalis Kamburelis.
+  Copyright 2015-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -127,6 +127,7 @@ begin
 
   FFdTessellationScale := TSFFloat.Create(Self, True, 'tessellationScale', 1.0);
    FdTessellationScale.ChangeAlways := chVisibleNonGeometry;
+   FdTessellationScale.MustBeNonnegative := true;
   AddField(FFdTessellationScale);
 
   FFdBboxCenter := TSFVec3f.Create(Self, False, 'bboxCenter', Vector3(0, 0, 0));

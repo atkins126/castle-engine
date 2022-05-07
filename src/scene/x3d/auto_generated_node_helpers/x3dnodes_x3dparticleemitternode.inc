@@ -1,6 +1,6 @@
 { -*- buffer-read-only: t -*-
 
-  Copyright 2015-2021 Michalis Kamburelis.
+  Copyright 2015-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -119,18 +119,22 @@ begin
 
   FFdSpeed := TSFFloat.Create(Self, True, 'speed', 0);
    FdSpeed.ChangeAlways := chVisibleNonGeometry;
+   FdSpeed.MustBeNonnegative := true;
   AddField(FFdSpeed);
 
   FFdVariation := TSFFloat.Create(Self, True, 'variation', 0.25);
    FdVariation.ChangeAlways := chVisibleNonGeometry;
+   FdVariation.MustBeNonnegative := true;
   AddField(FFdVariation);
 
   FFdMass := TSFFloat.Create(Self, False, 'mass', 0);
    FdMass.ChangeAlways := chVisibleNonGeometry;
+   FdMass.MustBeNonnegative := true;
   AddField(FFdMass);
 
   FFdSurfaceArea := TSFFloat.Create(Self, False, 'surfaceArea', 0);
    FdSurfaceArea.ChangeAlways := chVisibleNonGeometry;
+   FdSurfaceArea.MustBeNonnegative := true;
   AddField(FFdSurfaceArea);
 
   DefaultContainerField := 'emitter';

@@ -1,6 +1,6 @@
 { -*- buffer-read-only: t -*-
 
-  Copyright 2015-2021 Michalis Kamburelis.
+  Copyright 2015-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -105,6 +105,7 @@ begin
 
   FFdRadius := TSFFloat.Create(Self, False, 'radius', 1);
    FdRadius.ChangeAlways := chVisibleNonGeometry;
+   FdRadius.MustBeNonnegative := true;
   AddField(FFdRadius);
 
   FFdStartAngle := TSFFloat.Create(Self, False, 'startAngle', 0);

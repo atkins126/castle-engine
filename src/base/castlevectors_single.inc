@@ -490,10 +490,8 @@ function PointOnLineClosestToLine(
 
 { Functions to create common 4x4 matrices used in 3D graphics.
 
-  These functions generate the same matrices that are made by corresponding
-  OpenGL (gl or glu) functions. So rotations will be generated in the same
-  fashion, etc. For exact specification of what matrices they create see
-  OpenGL specification for routines glTranslate, glScale, glRotate.
+  These functions generate the same matrices as old OpenGL fixed-function was using.
+  They work in right-handed coordinate system, just like X3D, glTF and OpenGL.
 
   Functions named Matrices below generate both normal and inverted matrices.
   For example, function RotationMatrices returns two matrices that you
@@ -696,6 +694,8 @@ procedure ScalingMatrices(const ScaleFactor: TVector3;
   InvertedMatrixIdentityIfNotExists: boolean;
   out Matrix, InvertedMatrix: TMatrix4);
 
+function RotationMatrix(const AxisAngle: TVector4): TMatrix4; overload;
+
 function RotationMatrixRad(const AngleRad: Single; const Axis: TVector3): TMatrix4; overload;
 function RotationMatrixDeg(const AngleDeg: Single; const Axis: TVector3): TMatrix4; overload; deprecated 'use radians for everything throughout CGE';
 function RotationMatrixRad(const AngleRad: Single; const AxisX, AxisY, AxisZ: Single): TMatrix4; overload;
@@ -724,11 +724,7 @@ function RotatePoint2D(const Point: TVector2; const AngleRad: Single): TVector2;
   (like scale (-1, 1), common in 2D to flip horizontally).
 
   The overloaded version with matrix argument
-  makes a fast (not always correct) extraction of scale from matrix.
-  It does simple extraction and works for identity,
-  translation and scaling matrices.
-  It fails (returns incorrect values) when looking at some rotation matrices.
-  Use MatrixDecompose instead to have a full-blown, but slower, solution.
+  extracts scale from matrix, just like MatrixDecompose.
 
   @groupBegin }
 function Approximate3DScale(const X, Y, Z: Single): Single; overload;
@@ -2584,14 +2580,35 @@ begin
   end;
 end;
 
+function RotationMatrix(const AxisAngle: TVector4): TMatrix4;
+var
+  Axis: TVector3 absolute AxisAngle;
+begin
+  Result := RotationMatrixRad(AxisAngle.W, Axis);
+end;
+
 function RotationMatrixRad(const AngleRad: Single;
   const Axis: TVector3): TMatrix4;
 var
   NormAxis: TVector3;
   AngleSin, AngleCos: Float;
-  S, C: Single;
+  AxisLen, S, C: Single;
 begin
-  NormAxis := Axis.Normalize;
+  // NormAxis := Axis.Normalize;
+  { Instead of calling Axis.Normalize, we do normalization here.
+    This way we can react nicer (for zero additional cost) to Axis being
+    exactly zero (which is an easy mistake to make e.g. when editing Rotation
+    in CGE editor).
+    We'll return an identity matrix instead of invalid matrix
+    that would likely make transformed model invisible.
+    We still don't officially tolerate such Axis value. }
+  AxisLen := Axis.Length;
+  if AxisLen = 0 then
+    Exit(TMatrix4.Identity);
+  AxisLen := 1 / AxisLen;
+  NormAxis.X := Axis.X * AxisLen;
+  NormAxis.Y := Axis.Y * AxisLen;
+  NormAxis.Z := Axis.Z * AxisLen;
 
   SinCos(AngleRad, AngleSin, AngleCos);
   { convert Float to Single once }
@@ -2646,9 +2663,27 @@ var
   NormAxis: TVector3;
   V: Single;
   AngleSin, AngleCos: Float;
-  S, C: Single;
+  AxisLen, S, C: Single;
 begin
-  NormAxis := Axis.Normalize;
+  // NormAxis := Axis.Normalize;
+  { Instead of calling Axis.Normalize, we do normalization here.
+    This way we can react nicer (for zero additional cost) to Axis being
+    exactly zero (which is an easy mistake to make e.g. when editing Rotation
+    in CGE editor).
+    We'll return an identity matrix instead of invalid matrix
+    that would likely make transformed model invisible.
+    We still don't officially tolerate such Axis value. }
+  AxisLen := Axis.Length;
+  if AxisLen = 0 then
+  begin
+    Matrix := TMatrix4.Identity;
+    InvertedMatrix := TMatrix4.Identity;
+    Exit;
+  end;
+  AxisLen := 1 / AxisLen;
+  NormAxis.X := Axis.X * AxisLen;
+  NormAxis.Y := Axis.Y * AxisLen;
+  NormAxis.Z := Axis.Z * AxisLen;
 
   SinCos(AngleRad, AngleSin, AngleCos);
   { convert Float to Single once }
@@ -2749,15 +2784,14 @@ begin
 end;
 
 function Approximate3DScale(const M: TMatrix4): Single;
+var
+  Scale: TVector3;
 begin
-  { This is a simple method of extracting average scaling factor from a matrix.
-    Works OK for combination of scaling, translation matrices.
-    Will fail on rotation (and possibly many other) matrices. }
-  Result := Approximate3DScale(
-    M.Data[0, 0],
-    M.Data[1, 1],
-    M.Data[2, 2]
-  );
+  { See MatrixDecompose }
+  Scale.X := Vector3(M.Data[0, 0], M.Data[0, 1], M.Data[0, 2]).Length;
+  Scale.Y := Vector3(M.Data[1, 0], M.Data[1, 1], M.Data[1, 2]).Length;
+  Scale.Z := Vector3(M.Data[2, 0], M.Data[2, 1], M.Data[2, 2]).Length;
+  Result := Approximate3DScale(Scale);
 end;
 
 function Approximate2DScale(const X, Y: Single): Single;

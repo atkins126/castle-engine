@@ -1,6 +1,6 @@
 { -*- buffer-read-only: t -*-
 
-  Copyright 2015-2021 Michalis Kamburelis.
+  Copyright 2015-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -131,6 +131,7 @@ begin
 
   FFdHatchStyle := TSFInt32.Create(Self, True, 'hatchStyle', 1);
    FdHatchStyle.ChangeAlways := chVisibleNonGeometry;
+   FdHatchStyle.MustBeNonnegative := true;
   AddField(FFdHatchStyle);
 
   DefaultContainerField := 'fillProperties';

@@ -540,13 +540,16 @@ type
       then make it a "subcomponent" instead, by @code(SetSubComponent(true)).
 
       Note that both csSubComponent and csTransient only disable the component
-      serialization as part of parent's @code(TComponent.GetChildren) list.
+      serialization as part of parent's lists enumerated by CustomSerialization
+      (see internal TCastleUserInterface.SerializeChildrenEnumerate ,
+      TCastleTransform.SerializeChildrenEnumerate,
+      TCastleTransform.SerializeBehaviorsEnumerate).
+
       If you will make the component published in its own property
       (which is normal for "subcomponents")
       then it will be serialized anyway, just as part of it's own property
       (like TCastleScrollView.ScrollArea).
-      So to @italic(really) avoid serializing the component
-      (that you have to insert to @code(TComponent.GetChildren) list),
+      So to @italic(really) avoid serializing a children component
       make it csSubComponent and/or csTransient,
       and do not publish it.
     }
@@ -560,6 +563,9 @@ type
       @seealso NonVisualComponents
       @seealso NonVisualComponentsEnumerate }
     procedure AddNonVisualComponent(const NonVisualComponent: TComponent);
+
+    { Remove component previously added by AddNonVisualComponent. }
+    procedure RemoveNonVisualComponent(const NonVisualComponent: TComponent);
 
     { Count of components added by AddNonVisualComponent.
 
@@ -600,7 +606,7 @@ type
 
   For every TComponent it also recursively enumerates properties
   to translate in children, i.e. in all published subcomponents and children
-  (returned by TComponent.GetChildren). The goal is to be 100% consistent with
+  (returned by TCastleComponent.CustomSerialization). The goal is to be 100% consistent with
   CastleComponentSerialize, which is used to (de)serialize hierarchy of
   components (like TCastleUserInterface or TCastleTransform).
 
@@ -916,7 +922,8 @@ implementation
 uses
   {$ifdef UNIX} {$ifdef FPC} Unix, {$endif} {$endif}
   {$ifdef MSWINDOWS} Windows, {$endif}
-  StrUtils, Math {$ifdef FPC}, StreamIO, RTTIUtils {$endif}, TypInfo;
+  StrUtils, Math {$ifdef FPC}, StreamIO, RTTIUtils {$endif}, TypInfo,
+  CastleLog;
 
 { TStrings helpers ------------------------------------------------------- }
 
@@ -1350,8 +1357,11 @@ begin
     Result := 0 else
   if IsPeekedChar then
   begin
-    PChar(@Buffer)[0] := Chr(PeekedChar);
-    Result := 1 + SourceStream.Read(PChar(@Buffer)[1], Count - 1);
+    { Note: It would be more natural to access
+        PAnsiChar(@Buffer)[...],
+      but on Delphi the PAnsiChar cannot be indexed like an array. }
+    PByteArray(@Buffer)^[0] := PeekedChar;
+    Result := 1 + SourceStream.Read(PByteArray(@Buffer)^[1], Count - 1);
     { Note that if SourceStream.Read will raise an exception,
       we will still have IsPeekedChar = true. }
     IsPeekedChar := false;
@@ -1364,7 +1374,7 @@ end;
 
 function TSimplePeekCharStream.PeekChar: Integer;
 var
-  C: Char;
+  C: AnsiChar;
 begin
   if not IsPeekedChar then
   begin
@@ -1717,6 +1727,12 @@ begin
   FNonVisualComponents.Add(NonVisualComponent);
 end;
 
+procedure TCastleComponent.RemoveNonVisualComponent(const NonVisualComponent: TComponent);
+begin
+  if FNonVisualComponents <> nil then
+    FNonVisualComponents.Remove(NonVisualComponent);
+end;
+
 function TCastleComponent.NonVisualComponentsEnumerate: TNonVisualComponentsEnumerator;
 begin
   Result := TNonVisualComponentsEnumerator.Create(Self);
@@ -1759,14 +1775,28 @@ end;
 
 type
   { Helper class to implement TranslateProperties. }
-  TTranslatePropertiesGetChildren = class
-    TranslatePropertyEvent: TTranslatePropertyEvent;
+  TTranslatePropertiesGetChildren = class(TSerializationProcess)
+  strict private
     procedure TranslatePropertiesOnChild(Child: TComponent);
+  public
+    TranslatePropertyEvent: TTranslatePropertyEvent;
+    procedure ReadWrite(const AKey: String;
+      const ListEnumerate: TSerializationProcess.TListEnumerateEvent;
+      const ListAdd: TSerializationProcess.TListAddEvent;
+      const ListClear: TSerializationProcess.TListClearEvent); override;
   end;
 
 procedure TTranslatePropertiesGetChildren.TranslatePropertiesOnChild(Child: TComponent);
 begin
   TranslateProperties(Child, TranslatePropertyEvent);
+end;
+
+procedure TTranslatePropertiesGetChildren.ReadWrite(const AKey: String;
+  const ListEnumerate: TSerializationProcess.TListEnumerateEvent;
+  const ListAdd: TSerializationProcess.TListAddEvent;
+  const ListClear: TSerializationProcess.TListClearEvent);
+begin
+  ListEnumerate({$ifdef FPC}@{$endif} TranslatePropertiesOnChild);
 end;
 
 procedure TranslateProperties(const C: TComponent;
@@ -1800,8 +1830,7 @@ begin
     GetChildrenHandler := TTranslatePropertiesGetChildren.Create;
     try
       GetChildrenHandler.TranslatePropertyEvent := TranslatePropertyEvent;
-      TCastleComponent(C).GetChildren(
-        {$ifdef FPC}@{$endif} GetChildrenHandler.TranslatePropertiesOnChild, nil);
+      TCastleComponent(C).CustomSerialization(GetChildrenHandler);
     finally FreeAndNil(GetChildrenHandler) end;
   end;
 
@@ -1818,7 +1847,7 @@ begin
   finally FreeAndNil(PropInfos) end;
 {$else}
 begin
-  // TODO: not yet implemented for Delphi
+  WritelnWarning('Localization (TranslateProperties) not implemented for Delphi yet.');
 {$endif}
 end;
 
@@ -2112,6 +2141,11 @@ var
   TextFile: Text;
   StringStream: TStringStream;
 begin
+  {$ifdef VER3_3} {$define CASTLE_SECURE_BACKTRACE} {$endif}
+  {$ifdef CASTLE_SECURE_BACKTRACE}
+  try
+  {$endif}
+
   StringStream := TStringStream.Create('');
   try
     AssignStream(TextFile, StringStream);
@@ -2121,6 +2155,15 @@ begin
     finally CloseFile(TextFile) end;
     Result := StringStream.DataString;
   finally FreeAndNil(StringStream) end;
+
+  {$ifdef CASTLE_SECURE_BACKTRACE}
+  except
+    // TODO: investigate and report, reproducible by running play_animation with non-existent data.
+    // WritelnWarning('Capturing backtrace failed, this is known to happen with some FPC 3.3.1 versions.');
+    // Cannot log this problem -- as logging itself could use backtrace, causing infinite loop...
+    Result := '';
+  end;
+  {$endif}
 {$endif}
 end;
 {$endif}

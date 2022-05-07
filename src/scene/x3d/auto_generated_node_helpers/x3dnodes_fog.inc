@@ -1,6 +1,6 @@
 { -*- buffer-read-only: t -*-
 
-  Copyright 2015-2021 Michalis Kamburelis.
+  Copyright 2015-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -163,6 +163,7 @@ begin
 
   FFdVisibilityRange := TSFFloat.Create(Self, True, 'visibilityRange', 0);
    FdVisibilityRange.ChangeAlways := chRedisplay;
+   FdVisibilityRange.MustBeNonnegative := true;
   AddField(FFdVisibilityRange);
 
   FFdVolumetric := TSFBool.Create(Self, True, 'volumetric', false);

@@ -1,6 +1,6 @@
 { -*- buffer-read-only: t -*-
 
-  Copyright 2015-2021 Michalis Kamburelis.
+  Copyright 2015-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -123,10 +123,12 @@ begin
 
   FFdGustiness := TSFFloat.Create(Self, True, 'gustiness', 0.1);
    FdGustiness.ChangeAlways := chVisibleNonGeometry;
+   FdGustiness.MustBeNonnegative := true;
   AddField(FFdGustiness);
 
   FFdSpeed := TSFFloat.Create(Self, True, 'speed', 0.1);
    FdSpeed.ChangeAlways := chVisibleNonGeometry;
+   FdSpeed.MustBeNonnegative := true;
   AddField(FFdSpeed);
 
   FFdTurbulence := TSFFloat.Create(Self, True, 'turbulence', 0);
