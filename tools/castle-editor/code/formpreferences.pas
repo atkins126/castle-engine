@@ -28,10 +28,13 @@ type
     ButtonPanel1: TButtonPanel;
     CheckBoxMuteOnRun: TCheckBox;
     DirectoryEditFpc: TDirectoryEdit;
+    DirectoryEditCgePath: TDirectoryEdit;
     DirectoryEditLazarus: TDirectoryEdit;
     EditCodeEditorCommand: TFileNameEdit;
+    EditCodeEditorCommandLineColumn: TFileNameEdit;
     EditCodeEditorCommandProject: TFileNameEdit;
     LabelCodeEditorAutodetect: TLabel;
+    LabelCodeEditorCommandLineColumn: TLabel;
     LabelCompilerAutodetect: TLabel;
     LabelCompilerDelphi: TLabel;
     LabelCompilationHeader: TLabel;
@@ -39,6 +42,9 @@ type
     LabelCodeEditorDelphi: TLabel;
     LabelCompilerFpc: TLabel;
     LabelCodeEditorVSCode: TLabel;
+    LabelCgePath: TLabel;
+    LabelCgePathAutoDetected: TLabel;
+    LabelCgePathAutoDetectedCaption: TLabel;
     LabelInstructions0: TLabel;
     LabelInstructions1: TLabel;
     LabelInstructions2: TLabel;
@@ -57,6 +63,7 @@ type
     LabelFpcAutoDetected: TLabel;
     LabelLazarusAutoDetected: TLabel;
     ListPages: TListBox;
+    PanelGeneral: TPanel;
     PanelCompilation: TPanel;
     PanelInstructions: TPanel;
     PanelCodeEditor: TPanel;
@@ -72,9 +79,12 @@ type
     RadioCodeEditorVSCode: TRadioButton;
     TrackVolume: TTrackBar;
     procedure ButtonRegisterLazarusPackagesClick(Sender: TObject);
+    procedure DirectoryEditCgePathChange(Sender: TObject);
     procedure DirectoryEditFpcChange(Sender: TObject);
     procedure DirectoryEditLazarusChange(Sender: TObject);
     procedure EditCodeEditorCommandAcceptFileName(Sender: TObject;
+      var Value: String);
+    procedure EditCodeEditorCommandLineColumnAcceptFileName(Sender: TObject;
       var Value: String);
     procedure EditCodeEditorCommandProjectAcceptFileName(Sender: TObject;
       var Value: String);
@@ -86,7 +96,7 @@ type
     procedure RadioCodeEditorAnyChange(Sender: TObject);
     procedure TrackVolumeChange(Sender: TObject);
   private
-    OriginalFpcCustomPath, OriginalLazarusCustomPath: String;
+    OriginalFpcCustomPath, OriginalLazarusCustomPath, OriginalCastleEngineOverridePath: String;
     procedure UpdateAutoDetectedLabels;
     procedure UpdatePageVisible;
   public
@@ -99,6 +109,7 @@ var
 implementation
 
 uses CastleOpenDocument, CastleUtils, CastleLog, CastleSoundEngine,
+  CastleStringUtils,
   ToolCompilerInfo, ToolFpcVersion, ToolCommonUtils, ToolManifest,
   EditorUtils;
 
@@ -119,6 +130,7 @@ end;
 procedure TPreferencesForm.RadioCodeEditorAnyChange(Sender: TObject);
 begin
   EditCodeEditorCommand.Enabled := RadioCodeEditorCustom.Checked;
+  EditCodeEditorCommandLineColumn.Enabled := RadioCodeEditorCustom.Checked;
   EditCodeEditorCommandProject.Enabled := RadioCodeEditorCustom.Checked;
 end;
 
@@ -131,9 +143,23 @@ begin
 end;
 
 procedure TPreferencesForm.UpdateAutoDetectedLabels;
+
+  function CgePathAutodetectedLine: String;
+  begin
+    if (CastleEngineOverridePath = '') and
+       (CastleEnginePath <> '') then
+      Result := 'Auto-detected in: ' + CastleEnginePath + NL
+    else
+      Result := '';
+  end;
+
 var
-  FpcExe, FpcVer, LazarusExe, LazarusVer, DelphiPath, VSCodeExe: String;
+  FpcExe, FpcVer, LazarusExe, LazarusVer, DelphiPath, VSCodeExe,
+    CgePathStatusText: String;
 begin
+  CgePathStatus(CastleEnginePath, CgePathStatusText);
+  LabelCgePathAutoDetected.Caption := CgePathAutodetectedLine + CgePathStatusText;
+
   FpcExe := '';
   try
     FpcExe := FindExeFpcCompiler;
@@ -227,10 +253,12 @@ begin
 
   DirectoryEditFpc.Directory := FpcCustomPath;
   DirectoryEditLazarus.Directory := LazarusCustomPath;
+  DirectoryEditCgePath.Directory := CastleEngineOverridePath;
   { We will change the global Fpc/LazarusCustomPath during this dialog,
     so allow to revert them on "Cancel". }
   OriginalFpcCustomPath := FpcCustomPath;
   OriginalLazarusCustomPath := LazarusCustomPath;
+  OriginalCastleEngineOverridePath := CastleEngineOverridePath;
 
   // Note that making any RadioCodeEditorXxx checked will uncheck the others
   case CodeEditor of
@@ -242,6 +270,7 @@ begin
     else raise EInternalError.Create('CodeEditor?');
   end;
   EditCodeEditorCommand.Text := CodeEditorCommand;
+  EditCodeEditorCommandLineColumn.Text := CodeEditorCommandLineColumn;
   EditCodeEditorCommandProject.Text := CodeEditorCommandProject;
 
   // compilation tab
@@ -283,6 +312,7 @@ begin
       raise EInternalError.Create('Cannot determine CodeEditor choice, no radio selected');
 
     CodeEditorCommand := EditCodeEditorCommand.Text;
+    CodeEditorCommandLineColumn := EditCodeEditorCommandLineColumn.Text;
     CodeEditorCommandProject := EditCodeEditorCommandProject.Text;
 
     // compilation tab
@@ -309,6 +339,7 @@ begin
       accept the changes by clicking "OK". }
     FpcCustomPath := OriginalFpcCustomPath;
     LazarusCustomPath := OriginalLazarusCustomPath;
+    CastleEngineOverridePath := OriginalCastleEngineOverridePath;
   end;
 
   { Set SoundEngine.Volume regardless if we accepted
@@ -324,7 +355,7 @@ begin
     if RadioCodeEditorCustom.Checked and
        (Trim(EditCodeEditorCommand.Text) = '') then
     begin
-      ErrorBox('You must specify some custom editor command, or switch to use "Lazarus" as code editor');
+      ErrorBox('You must specify some custom editor command, or switch to use other (e.g. autodetected) code editor');
       CanClose := false;
       Exit;
     end;
@@ -338,18 +369,17 @@ begin
 end;
 
 procedure TPreferencesForm.ButtonRegisterLazarusPackagesClick(Sender: TObject);
-var
-  ExecutionLog: String;
 
   procedure RegisterPackage(const LpkFileName: String);
   var
-    LazbuildExe, LazbuildOutput, PackageFileName, CommandLog: String;
+    LazbuildExe, LazbuildOutput, PackageFileName: String;
     LazbuildExitStatus: integer;
   begin
     LazbuildExe := FindExeLazbuild;
 
     PackageFileName := CastleEnginePath + LpkFileName;
 
+    WritelnLog('Executing: lazbuild --add-package-link "' + PackageFileName + '"');
     MyRunCommandIndir(
       GetCurrentDir { no better directory, but also should not matter },
       LazbuildExe, [
@@ -357,9 +387,7 @@ var
         PackageFileName
       ], LazbuildOutput, LazbuildExitStatus);
 
-    CommandLog := 'lazbuild --add-package-link "' + PackageFileName + '"';
-    ExecutionLog := ExecutionLog + NL + NL + CommandLog;
-    WritelnLog('lazbuild status %d, output:' + NL + '%s', [LazbuildExitStatus, LazbuildOutput]);
+    WritelnLog('Execution finished: lazbuild status %d, output:' + NL + '%s', [LazbuildExitStatus, LazbuildOutput]);
 
     if (LazbuildExitStatus <> 0) or
        (Pos('Invalid option', LazbuildOutput) <> 0) { lazbuild has exit status 0 in this case } then
@@ -367,8 +395,6 @@ var
   end;
 
 begin
-  ExecutionLog := 'Lazarus packages registed successfully.' + NL + NL +
-    'Executed the following commands:';
   try
     RegisterPackage('src/vampyre_imaginglib/src/Packages/VampyreImagingPackage.lpk');
     RegisterPackage('src/vampyre_imaginglib/src/Packages/VampyreImagingPackageExt.lpk');
@@ -379,11 +405,17 @@ begin
     RegisterPackage('packages/alternative_castle_window_based_on_lcl.lpk');
     RegisterPackage('packages/castle_indy.lpk');
 
-    ShowMessage(ExecutionLog);
+    ShowMessage('Lazarus packages registered successfully.');
   except
     on E: Exception do
       ErrorBox(E.Message);
   end;
+end;
+
+procedure TPreferencesForm.DirectoryEditCgePathChange(Sender: TObject);
+begin
+  CastleEngineOverridePath := DirectoryEditCgePath.Directory;
+  UpdateAutoDetectedLabels;
 end;
 
 procedure TPreferencesForm.DirectoryEditLazarusChange(Sender: TObject);
@@ -399,6 +431,13 @@ begin
   Value := '"' + Value + '" ${PAS}';
 end;
 
+procedure TPreferencesForm.EditCodeEditorCommandLineColumnAcceptFileName(
+  Sender: TObject; var Value: String);
+begin
+  // auto-add macros and propose quoting
+  Value := '"' + Value + '" ${PAS}:${LINE}:${COLUMN}';
+end;
+
 procedure TPreferencesForm.EditCodeEditorCommandProjectAcceptFileName(
   Sender: TObject; var Value: String);
 begin
@@ -408,17 +447,25 @@ end;
 
 procedure TPreferencesForm.UpdatePageVisible;
 var
+  PageIndex: Integer;
   SelectedPage: TPanel;
 begin
-  case ListPages.ItemIndex of
-    0: SelectedPage := PanelCodeEditor;
-    1: SelectedPage := PanelCompilation;
-    2: SelectedPage := PanelFpcLazarusConfig;
-    3: SelectedPage := PanelSound;
+  PageIndex := ListPages.ItemIndex;
+  if PageIndex = -1 then
+    // on macOS (Cocoa) user can click anywhere in list to deselect it, tolerate it
+    PageIndex := 0;
+
+  case PageIndex of
+    0: SelectedPage := PanelGeneral;
+    1: SelectedPage := PanelCodeEditor;
+    2: SelectedPage := PanelCompilation;
+    3: SelectedPage := PanelFpcLazarusConfig;
+    4: SelectedPage := PanelSound;
     else raise Exception.CreateFmt('Unexpected ListPages.ItemIndex %d', [ListPages.ItemIndex]);
   end;
+  SetEnabledVisible(PanelGeneral         , PanelGeneral          = SelectedPage);
   SetEnabledVisible(PanelCodeEditor      , PanelCodeEditor       = SelectedPage);
-  SetEnabledVisible(PanelCompilation     , PanelCompilation       = SelectedPage);
+  SetEnabledVisible(PanelCompilation     , PanelCompilation      = SelectedPage);
   SetEnabledVisible(PanelFpcLazarusConfig, PanelFpcLazarusConfig = SelectedPage);
   SetEnabledVisible(PanelSound           , PanelSound            = SelectedPage);
 end;

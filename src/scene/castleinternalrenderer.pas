@@ -727,6 +727,7 @@ type
       The given camera position, direction, up should be in world space
       (that is, in TCastleRootTransform space,
       not in space local to this TCastleScene).
+      These camera vectors are used to update TRenderedTextureNode, if any.
 
       This does not change current viewport or projection matrix. }
     procedure UpdateGeneratedTextures(const Shape: TX3DRendererShape;
@@ -1065,24 +1066,24 @@ var
   I: Integer;
   TextureCached: TTextureCubeMapCache;
 begin
-  for I := 0 to TextureCubeMapCaches.Count - 1 do
-  begin
-    TextureCached := TextureCubeMapCaches[I];
-
-    if (TextureFullUrl <> '') and
-       (TextureCached.FullUrl = TextureFullUrl) and
-       (TextureCached.Filter = Filter) and
-       (TextureCached.Anisotropy = Anisotropy) then
+  if TextureFullUrl <> '' then // never share texture with FullUrl = '', e.g. from GeneratedCubeMapTexture
+    for I := 0 to TextureCubeMapCaches.Count - 1 do
     begin
-      Inc(TextureCached.References);
-      if LogRendererCache then
-        WritelnLog('++', 'Cube map %s: %d', [
-          TextureFullUrl,
-          TextureCached.References
-        ]);
-      Exit(TextureCached.GLName);
+      TextureCached := TextureCubeMapCaches[I];
+
+      if (TextureCached.FullUrl = TextureFullUrl) and
+         (TextureCached.Filter = Filter) and
+         (TextureCached.Anisotropy = Anisotropy) then
+      begin
+        Inc(TextureCached.References);
+        if LogRendererCache then
+          WritelnLog('++', 'Cube map %s: %d', [
+            TextureFullUrl,
+            TextureCached.References
+          ]);
+        Exit(TextureCached.GLName);
+      end;
     end;
-  end;
 
   glGenTextures(1, @Result);
   glBindTexture(GL_TEXTURE_CUBE_MAP, Result);
