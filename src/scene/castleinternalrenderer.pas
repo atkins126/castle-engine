@@ -1754,11 +1754,35 @@ var
   NewVbos: boolean;
 
   { Bind Vbo buffer and load data. Updates AllocatedSize.
+
     Uses glBufferSubData if possible, as it may be faster than glBufferData
-    (not confirmed by tests, although OpenGL manuals suggest it). }
+    (not confirmed by tests, but OpenGL docs suggest it:
+    https://registry.khronos.org/OpenGL-Refpages/gl4/html/glBufferSubData.xhtml
+    "When replacing the entire data store, consider using glBufferSubData
+    rather than completely recreating the data store with glBufferData.
+    This avoids the cost of reallocating the data store. " ). }
   procedure BufferData(const VboType: TVboType;
     const Target: TGLenum; const Size: Cardinal; const Data: Pointer);
   begin
+    { It may happen that Data = nil, because Arrays.AttributeSize may be 0
+      (some shapes just don't need extra per-vertex attributes).
+
+      We should not proceed then.
+      Passing Data = nil to glBufferSubData can make actual bugs:
+      see the testcase from
+      https://github.com/castle-engine/castle-engine/issues/389 :
+      open dragon.json, turn on "Dynamic Batching", run some animation
+      -- it will update VBOs each frame, and on at least some systems
+      (confirmed on 3 systems with NVidia on Windows) it will cause
+      weird problems (like unrelated buffers are trashed with garbage).
+      Strangely glBufferData doesn't have a problem with Data = nil,
+      but we also avoid it. }
+    if Data = nil then
+    begin
+      Assert(Size = 0);
+      Exit;
+    end;
+
     if NewVbos or
        (VboType in VboToReload) or
        { In normal circumstances, when vbo is already loaded,
@@ -1981,7 +2005,7 @@ begin
             { We have to ignore invalid uniforms, as it's normal that when
               rendering screen effect we will pass some screen_* variables
               that you will not use. }
-            ShaderProgram.UniformNotFoundAction := uaIgnore;
+            ShaderProgram.UniformMissing := umIgnore;
 
             Node.Shader := ShaderProgram;
             ScreenEffectPrograms.Add(ShaderProgram);
@@ -3310,7 +3334,7 @@ begin
       if not FastUpdateArrays(Shape) then
       begin
         FreeAndNil(Shape.Cache.Arrays); // we just need to create new Arrays
-        Generator := GeneratorClass.Create(Shape, true);
+        Generator := GeneratorClass.Create(Shape);
         try
           Generator.TexCoordsNeeded := TexCoordsNeeded;
           Generator.FogVolumetric := FogVolumetric;
@@ -3455,27 +3479,14 @@ procedure TGLRenderer.UpdateGeneratedTextures(const Shape: TX3DRendererShape;
   procedure UpdateRenderedTexture(TexNode: TRenderedTextureNode);
   var
     GLNode: TGLRenderedTextureNode;
-    GeometryCoordsField: TMFVec3f;
-    GeometryCoords: TVector3List;
   begin
     if TexNode.GenTexFunctionality.NeedsUpdate then
     begin
       GLNode := TGLRenderedTextureNode(GLTextureNodes.TextureNode(TexNode));
       if GLNode <> nil then
       begin
-        { calculate GeometryCoords }
-        GeometryCoords := nil;
-        if Shape.Geometry.InternalCoord(Shape.State, GeometryCoordsField) and
-           (GeometryCoordsField <> nil) then
-          GeometryCoords := GeometryCoordsField.Items;
-
-        GLNode.Update(Render, ProjectionNear, ProjectionFar,
-          CurrentViewpoint, CameraViewKnown,
-          CameraPosition, CameraDirection, CameraUp,
-          Shape.BoundingBox,
-          Shape.State.Transformation.Transform,
-          GeometryCoords,
-          Shape.MirrorPlaneUniforms);
+        GLNode.Update(Render, ProjectionNear, ProjectionFar, CurrentViewpoint,
+          CameraViewKnown, CameraPosition, CameraDirection, CameraUp, Shape);
 
         TexNode.GenTexFunctionality.PostUpdate;
 
@@ -3487,9 +3498,11 @@ procedure TGLRenderer.UpdateGeneratedTextures(const Shape: TX3DRendererShape;
 
 begin
   if TextureNode is TGeneratedCubeMapTextureNode then
-    UpdateGeneratedCubeMap(TGeneratedCubeMapTextureNode(TextureNode)) else
+    UpdateGeneratedCubeMap(TGeneratedCubeMapTextureNode(TextureNode))
+  else
   if TextureNode is TGeneratedShadowMapNode then
-    UpdateGeneratedShadowMap(TGeneratedShadowMapNode(TextureNode)) else
+    UpdateGeneratedShadowMap(TGeneratedShadowMapNode(TextureNode))
+  else
   if TextureNode is TRenderedTextureNode then
     UpdateRenderedTexture(TRenderedTextureNode(TextureNode));
 end;

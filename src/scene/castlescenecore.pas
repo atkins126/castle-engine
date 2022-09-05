@@ -416,7 +416,7 @@ type
     During the lifetime of the scene, this X3D graph can change
     (e.g. because of animations), and you can always change it by code
     too. E.g. you can freely change @link(TTransformNode.Translation)
-    or add children by @link(TAbstractX3DGroupingNode.AddChildren RootNode.AddChildren).
+    or add children by @link(TAbstractGroupingNode.AddChildren RootNode.AddChildren).
     The X3D nodes graph works like a DOM tree for rendering HTML documents:
     it's typically initialized from a file (3D model), but during
     the game execution it is dynamic, always changing.
@@ -440,8 +440,8 @@ type
   private
     type
       TSceneValidity = (fvLocalBoundingBox,
-        fvVerticesCountNotOver, fvVerticesCountOver,
-        fvTrianglesCountNotOver, fvTrianglesCountOver,
+        fvVerticesCount,
+        fvTrianglesCount,
         fvMainLightForShadows,
         fvShapesActiveCount,
         fvShapesActiveVisibleCount);
@@ -697,11 +697,11 @@ type
     FGlobalLights: TLightInstancesList;
 
     FLocalBoundingBox: TBox3D;
-    FVerticesCount, FTrianglesCount: array [boolean] of Cardinal;
+    FVerticesCount, FTrianglesCount: Cardinal;
     Validities: TSceneValidities;
     function CalculateLocalBoundingBox: TBox3D;
-    function CalculateVerticesCount(OverTriangulate: boolean): Cardinal;
-    function CalculateTrianglesCount(OverTriangulate: boolean): Cardinal;
+    function CalculateVerticesCount: Cardinal;
+    function CalculateTrianglesCount: Cardinal;
   private
   type
     TAbstractViewpointNodeList = {$ifdef FPC}specialize{$endif} TObjectList<TAbstractViewpointNode>;
@@ -789,19 +789,12 @@ type
   private
     FCompiledScriptHandlers: TCompiledScriptHandlerInfoList;
 
-    function OverrideOctreeLimits(
-      const BaseLimits: TOctreeLimits;
-      const OP: TSceneOctreeProperties): TOctreeLimits;
-
     { Create octree containing all triangles or shapes from our scene.
       Create octree, inits it with our LocalBoundingBox
       and adds shapes (or all triangles from our Shapes).
 
       Triangles are generated using calls like
-      @code(Shape.Triangulate(false, ...)).
-      Note that OverTriangulate parameter for Triangulate call above is @false:
-      it shouldn't be needed to have triangle octree with over-triangulate
-      (over-triangulate is only for rendering with Gouraud shading).
+      @code(Shape.Triangulate(...)).
 
       If Collidable, then only the collidable, or at least "pickable",
       triangles are generated. Which means that children of
@@ -1166,13 +1159,15 @@ type
 
     { Calculate the number of triangls and vertexes of all
       shapa states. For detailed specification of what these functions
-      do (and what does OverTriangulate mean) see appropriate
-      TAbstractGeometryNode methods. Here, we just sum their results
-      for all shapes.
+      do see appropriate TAbstractGeometryNode methods.
+      Here, we just sum their results for all shapes.
       @groupBegin }
-    function VerticesCount(OverTriangulate: boolean): Cardinal;
-    function TrianglesCount(OverTriangulate: boolean): Cardinal;
+    function VerticesCount: Cardinal; overload;
+    function TrianglesCount: Cardinal; overload;
     { @groupEnd }
+
+    function VerticesCount(const Ignored: Boolean): Cardinal; overload; deprecated 'use VerticesCount without Boolean argument, it is ignored now';
+    function TrianglesCount(const Ignored: Boolean): Cardinal; overload; deprecated 'use TrianglesCount without Boolean argument, it is ignored now';
 
     { Helper functions for accessing viewpoints defined in the scene.
       @groupBegin }
@@ -3587,7 +3582,7 @@ begin
     Result.Include(Shape.BoundingBox);
 end;
 
-function TCastleSceneCore.CalculateVerticesCount(OverTriangulate: boolean): Cardinal;
+function TCastleSceneCore.CalculateVerticesCount: Cardinal;
 var
   ShapeList: TShapeList;
   Shape: TShape;
@@ -3595,10 +3590,10 @@ begin
   Result := 0;
   ShapeList := Shapes.TraverseList(true);
   for Shape in ShapeList do
-    Result := Result + Shape.VerticesCount(OverTriangulate);
+    Result := Result + Shape.VerticesCount;
 end;
 
-function TCastleSceneCore.CalculateTrianglesCount(OverTriangulate: boolean): Cardinal;
+function TCastleSceneCore.CalculateTrianglesCount: Cardinal;
 var
   ShapeList: TShapeList;
   Shape: TShape;
@@ -3606,7 +3601,7 @@ begin
   Result := 0;
   ShapeList := Shapes.TraverseList(true);
   for Shape in ShapeList do
-    Result := Result + Shape.TrianglesCount(OverTriangulate);
+    Result := Result + Shape.TrianglesCount;
 end;
 
 function TCastleSceneCore.LocalBoundingBox: TBox3D;
@@ -3625,44 +3620,34 @@ begin
   Result.Include(inherited LocalBoundingBox);
 end;
 
-function TCastleSceneCore.VerticesCount(OverTriangulate: boolean): Cardinal;
+function TCastleSceneCore.VerticesCount: Cardinal;
 begin
-  if OverTriangulate then
+  if not (fvVerticesCount in Validities) then
   begin
-    if not (fvVerticesCountOver in Validities) then
-    begin
-      FVerticesCount[OverTriangulate] := CalculateVerticesCount(OverTriangulate);
-      Include(Validities, fvVerticesCountOver);
-    end;
-  end else
-  begin
-    if not (fvVerticesCountNotOver in Validities) then
-    begin
-      FVerticesCount[OverTriangulate] := CalculateVerticesCount(OverTriangulate);
-      Include(Validities, fvVerticesCountNotOver);
-    end;
+    FVerticesCount := CalculateVerticesCount;
+    Include(Validities, fvVerticesCount);
   end;
-  Result := FVerticesCount[OverTriangulate];
+  Result := FVerticesCount;
 end;
 
-function TCastleSceneCore.TrianglesCount(OverTriangulate: boolean): Cardinal;
+function TCastleSceneCore.TrianglesCount: Cardinal;
 begin
-  if OverTriangulate then
+  if not (fvTrianglesCount in Validities) then
   begin
-    if not (fvTrianglesCountOver in Validities) then
-    begin
-      FTrianglesCount[OverTriangulate] := CalculateTrianglesCount(OverTriangulate);
-      Include(Validities, fvTrianglesCountOver);
-    end;
-  end else
-  begin
-    if not (fvTrianglesCountNotOver in Validities) then
-    begin
-      FTrianglesCount[OverTriangulate] := CalculateTrianglesCount(OverTriangulate);
-      Include(Validities, fvTrianglesCountNotOver);
-    end;
+    FTrianglesCount := CalculateTrianglesCount;
+    Include(Validities, fvTrianglesCount);
   end;
-  Result := FTrianglesCount[OverTriangulate];
+  Result := FTrianglesCount;
+end;
+
+function TCastleSceneCore.VerticesCount(const Ignored: Boolean): Cardinal;
+begin
+  Result := VerticesCount();
+end;
+
+function TCastleSceneCore.TrianglesCount(const Ignored: Boolean): Cardinal;
+begin
+  Result := TrianglesCount();
 end;
 
 function TCastleSceneCore.CreateShape(const AGeometry: TAbstractGeometryNode;
@@ -3713,7 +3698,7 @@ function TChangedAllTraverser.Traverse(
       So we cheat a little, knowing that internally every node implementing TTransformFunctionality
       does StateStack.Push inside BeforeTraverse exactly once and then
       modifies transformation.
-      (This happens for both TAbstractGroupingNode and THAnimHumanoidNode.
+      (This happens for both TAbstractInternalGroupingNode and THAnimHumanoidNode.
       Right now, node with TTransformFunctionality is always one of those.)
       So we know that previous state lies safely at PreviousTop.
 
@@ -4515,10 +4500,8 @@ function TTransformChangeHelper.TransformChangeTraverse(
     for Shape in ShapeList do
     begin
       HandleLightsList(Shape.OriginalState.Lights);
-      if Shape.State(true) <> Shape.OriginalState then
-        HandleLightsList(Shape.State(true).Lights);
-      if Shape.State(false) <> Shape.OriginalState then
-        HandleLightsList(Shape.State(false).Lights);
+      if Shape.State <> Shape.OriginalState then
+        HandleLightsList(Shape.State.Lights);
     end;
 
     { Update also light state on GlobalLights list, in case other scenes
@@ -5031,8 +5014,8 @@ var
       of the needed things when ScheduledGeometryActiveShapesChanged:
 
       fvLocalBoundingBox,
-      fvVerticesCountNotOver, fvVerticesCountOver,
-      fvTrianglesCountNotOver, fvTrianglesCountOver,
+      fvVerticesCount,
+      fvTrianglesCount
     }
 
     Validities := Validities - [
@@ -5552,10 +5535,8 @@ begin
   );
 
   Validities := Validities - [
-    fvVerticesCountNotOver,
-    fvVerticesCountOver,
-    fvTrianglesCountNotOver,
-    fvTrianglesCountOver
+    fvVerticesCount,
+    fvTrianglesCount
   ];
 
   if MaybeBoundingBoxChanged then
@@ -5651,29 +5632,10 @@ begin
     OnBoundNavigationInfoFieldsChanged(Self);
 end;
 
-resourcestring
-  SSceneInfoTriVertCounts_Same = 'Scene contains %d triangles and %d ' +
-    'vertices (with and without over-triangulating).';
-  SSceneInfoTriVertCounts_1 =
-    'When we don''t use over-triangulating (e.g. when we do collision '+
-    'detection or ray tracing) scene has %d triangles and %d vertices.';
-  SSceneInfoTriVertCounts_2 =
-    'When we use over-triangulating (e.g. when we do OpenGL rendering) '+
-    'scene has %d triangles and %d vertices.';
-
 function TCastleSceneCore.InfoTriangleVerticesCounts: string;
 begin
-  if (VerticesCount(false) = VerticesCount(true)) and
-     (TrianglesCount(false) = TrianglesCount(true)) then
-    Result := Format(SSceneInfoTriVertCounts_Same,
-      [TrianglesCount(false), VerticesCount(false)]) + NL else
-  begin
-    Result :=
-      Format(SSceneInfoTriVertCounts_1,
-        [TrianglesCount(false), VerticesCount(false)]) + NL +
-      Format(SSceneInfoTriVertCounts_2,
-        [TrianglesCount(true), VerticesCount(true)]) + NL;
-  end;
+  Result := Format('Scene contains %d triangles and %d vertices.',
+    [TrianglesCount, VerticesCount]) + NL;
 end;
 
 function TCastleSceneCore.InfoBoundingBox: string;
@@ -5748,22 +5710,6 @@ begin
 end;
 
 { octrees -------------------------------------------------------------------- }
-
-function TCastleSceneCore.OverrideOctreeLimits(
-  const BaseLimits: TOctreeLimits;
-  const OP: TSceneOctreeProperties): TOctreeLimits;
-var
-  Props: TKambiOctreePropertiesNode;
-begin
-  Result := BaseLimits;
-  if (NavigationInfoStack.Top <> nil) and
-     (NavigationInfoStack.Top is TKambiNavigationInfoNode) then
-  begin
-    Props := TKambiNavigationInfoNode(NavigationInfoStack.Top).OctreeProperties(OP);
-    if Props <> nil then
-      Props.OverrideLimits(Result);
-  end;
-end;
 
 function TCastleSceneCore.TriangleOctreeLimits: POctreeLimits;
 begin
@@ -5878,7 +5824,7 @@ begin
   if (ssRendering in Spatial) and (FOctreeRendering = nil) then
   begin
     FOctreeRendering := CreateShapeOctree(
-      OverrideOctreeLimits(FShapeOctreeLimits, opRendering),
+      FShapeOctreeLimits,
       ShapeOctreeProgressTitle,
       false);
     if LogChanges then
@@ -5893,7 +5839,7 @@ begin
   if (ssDynamicCollisions in Spatial) and (FOctreeDynamicCollisions = nil) then
   begin
     FOctreeDynamicCollisions := CreateShapeOctree(
-      OverrideOctreeLimits(FShapeOctreeLimits, opDynamicCollisions),
+      FShapeOctreeLimits,
       ShapeOctreeProgressTitle,
       true);
     if LogChanges then
@@ -5907,7 +5853,7 @@ function TCastleSceneCore.InternalOctreeVisibleTriangles: TTriangleOctree;
 begin
   if (ssVisibleTriangles in Spatial) and (FOctreeVisibleTriangles = nil) then
     FOctreeVisibleTriangles := CreateTriangleOctree(
-      OverrideOctreeLimits(FTriangleOctreeLimits, opVisibleTriangles),
+      FTriangleOctreeLimits,
       TriangleOctreeProgressTitle,
       false);
   Result := FOctreeVisibleTriangles;
@@ -5917,7 +5863,7 @@ function TCastleSceneCore.InternalOctreeStaticCollisions: TTriangleOctree;
 begin
   if (ssStaticCollisions in Spatial) and (FOctreeStaticCollisions = nil) then
     FOctreeStaticCollisions := CreateTriangleOctree(
-      OverrideOctreeLimits(FTriangleOctreeLimits, opStaticCollisions),
+      FTriangleOctreeLimits,
       TriangleOctreeProgressTitle,
       true);
   Result := FOctreeStaticCollisions;
@@ -5968,7 +5914,7 @@ function TCastleSceneCore.CreateTriangleOctree(
     for Shape in ShapeList do
       if (Collidable and Shape.Collidable) or
          ((not Collidable) and Shape.Visible) then
-        Shape.Triangulate(false, TriangleEvent);
+        Shape.Triangulate(TriangleEvent);
   end;
 
 begin
@@ -5977,11 +5923,11 @@ begin
 
   Result := TTriangleOctree.Create(Limits, LocalBoundingBox);
   try
-    Result.Triangles.Capacity := TrianglesCount(false);
+    Result.Triangles.Capacity := TrianglesCount;
     if (ProgressTitle <> '') and
        (not Progress.Active) then
     begin
-      Progress.Init(TrianglesCount(false), ProgressTitle, true);
+      Progress.Init(TrianglesCount, ProgressTitle, true);
       try
         TriangleOctreeToAdd := Result;
         FillOctree({$ifdef FPC} @ {$endif} AddTriangleToOctreeProgress);
@@ -7083,8 +7029,7 @@ end;
 procedure TCastleSceneCore.ResetTimeAtLoad;
 begin
   if (NavigationInfoStack.Top <> nil) and
-     (NavigationInfoStack.Top is TKambiNavigationInfoNode) and
-     TKambiNavigationInfoNode(NavigationInfoStack.Top).TimeOriginAtLoad then
+     NavigationInfoStack.Top.TimeOriginAtLoad then
     FTimeAtLoad := 0.0
   else
     FTimeAtLoad := DateTimeToUnix(CastleNow);
@@ -7570,11 +7515,10 @@ var
       Navigation.ClimbHeight := 0;
 
     { calculate Navigation.HeadBobbing* }
-    if (NavigationNode <> nil) and
-       (NavigationNode is TKambiNavigationInfoNode) then
+    if NavigationNode <> nil then
     begin
-      Navigation.HeadBobbing := TKambiNavigationInfoNode(NavigationNode).FdHeadBobbing.Value;
-      Navigation.HeadBobbingTime := TKambiNavigationInfoNode(NavigationNode).FdHeadBobbingTime.Value;
+      Navigation.HeadBobbing := NavigationNode.HeadBobbing;
+      Navigation.HeadBobbingTime := NavigationNode.HeadBobbingTime;
     end else
     begin
       Navigation.HeadBobbing := TCastleWalkNavigation.DefaultHeadBobbing;
@@ -7910,23 +7854,18 @@ begin
 end;
 
 function TCastleSceneCore.CustomHeadlight: TAbstractLightNode;
-var
-  MaybeResult: TX3DNode;
 begin
-  Result := nil;
-  if (NavigationInfoStack.Top <> nil) and
-     (NavigationInfoStack.Top is TKambiNavigationInfoNode) then
-  begin
-    MaybeResult := TKambiNavigationInfoNode(NavigationInfoStack.Top).FdheadlightNode.Value;
-    if MaybeResult is TAbstractLightNode then
-      Result := TAbstractLightNode(MaybeResult);
-  end;
+  if NavigationInfoStack.Top <> nil then
+    Result := NavigationInfoStack.Top.HeadlightNode
+  else
+    Result := nil;
 end;
 
 procedure TCastleSceneCore.UpdateHeadlightOnFromNavigationInfo;
 begin
   if NavigationInfoStack.Top <> nil then
-    HeadlightOn := NavigationInfoStack.Top.FdHeadlight.Value else
+    HeadlightOn := NavigationInfoStack.Top.Headlight
+  else
     HeadlightOn := DefaultNavigationInfoHeadlight;
 end;
 

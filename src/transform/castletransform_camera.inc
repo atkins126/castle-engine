@@ -715,7 +715,6 @@ begin
   if AShowGizmo then
   begin
     Gizmo := TInternalCastleEditorGizmo.Create(Self);
-    Gizmo.SetParent(Self);
     Gizmo.LoadVisualization(BuildGizmo);
     Gizmo.SelectBoxTranslation := CastleVectors.Vector3(0, 0, -0.5); // matches nicely our visualization set by UpdateGizmoCoord
     { No need for icon anymore, gizmo is recognizeable enough.
@@ -1144,10 +1143,20 @@ function TCastleCamera.InternalProjection(const BoxEvent: TBox3DEvent; const Vie
     Pos, Dir, Up: TVector3;
   begin
     Box := BoxEvent();
+    if Box.IsEmpty then
+    begin
+      // any values are OK, as we'll not render anyhitng
+      MinBoxDistance := -10;
+      MaxBoxDistance := 10;
+      Exit;
+    end;
     GetWorldView(Pos, Dir, Up);
     Box.DirectionDistances(Pos, Dir, MinBoxDistance, MaxBoxDistance);
-    { Multiply by 1.1, just to make it a bit larger to avoid imprecision at max depth }
-    MaxBoxDistance := MaxBoxDistance * 1.1;
+    { Make the range MinBoxDistance...MaxBoxDistance slightly larger,
+      to avoid cutting things due to imprecision when they lie exactly on the min/max distance.
+      Testcase: trees in isometric_game when observer sprite has Exists=false. }
+    MinBoxDistance := MinBoxDistance - 1;
+    MaxBoxDistance := (MaxBoxDistance + 1) * 1.1;
   end;
 
 var
@@ -1228,6 +1237,12 @@ var
         (results of my tests: it does not). }
       {
       Box := BoxEvent();
+      if Box.IsEmpty then
+      begin
+        // any values are OK, as we'll not render anyhitng
+        Result := 10;
+        Exit;
+      end;
       Box.PointDistances(WorldTranslation, MinBoxDistance, MaxBoxDistance);
       Result := MaxBoxDistance * 2;
       WritelnLog('Autocalculated ProjectionFar %f', [Result]);
@@ -1301,13 +1316,13 @@ begin
 {
   WritelnLogMultiline('Projection', Format(
     'ProjectionType: %s' + NL +
-    'Perspective Field of View (in degrees): %f x %f' + NL +
+    'Perspective Field of View (Angles in degrees): %f x %f' + NL +
     'Orthographic Dimensions: %s' + NL +
     'Near: %f' + NL +
     'Far: %f', [
     ProjectionTypeToStr(Result.ProjectionType),
-    Result.PerspectiveAngles.X,
-    Result.PerspectiveAngles.Y,
+    RadToDeg(Result.PerspectiveAnglesRad.X),
+    RadToDeg(Result.PerspectiveAnglesRad.Y),
     Result.Dimensions.ToString,
     Result.ProjectionNear,
     Result.ProjectionFar
