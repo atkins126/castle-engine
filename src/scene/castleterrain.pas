@@ -1,5 +1,5 @@
 {
-  Copyright 2009-2022 Michalis Kamburelis.
+  Copyright 2009-2023 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -83,7 +83,7 @@ interface
 uses SysUtils, Classes,
   CastleClassUtils, CastleScript, CastleImages, X3DNodes, CastleVectors,
   CastleRectangles, CastleTransform, CastleScene, X3DFields, CastleRenderOptions,
-  CastleColors;
+  CastleColors, CastleTriangles;
 
 type
   { Terrain (height map) data that can be used for @link(TCastleTerrain.Data). }
@@ -628,6 +628,8 @@ type
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
     function PropertySections(const PropertyName: String): TPropertySections; override;
+    function HasColliderMesh: Boolean; override;
+    procedure ColliderMesh(const TriangleEvent: TTriangleEvent); override;
 
     { How dense is the mesh.
       By default this is (DefaultSubdivisions,DefaultSubdivisions).
@@ -842,7 +844,7 @@ begin
       );
       // TexCoord.Y grows in different direction, see Height docs for reason
       TexCoord.Y := 1 - TexCoord.Y;
-      Grid.FdHeight.Items.List^[X + Z * SubdivisionsX] := Height(Coord, TexCoord);
+      Grid.FdHeight.Items.L[X + Z * SubdivisionsX] := Height(Coord, TexCoord);
     end;
 
   Shape.Appearance := Appearance;
@@ -886,7 +888,7 @@ procedure TCastleTerrainData.UpdateTriangulatedNode(const Node: TAbstractChildNo
 var
   SubdivisionsPlus1: TVector2Cardinal;
   Coord, Normal: TVector3List;
-  Index: TLongIntList;
+  Index: TInt32List;
   FaceNormals: TVector3List;
   SubdivisionsX, SubdivisionsZ: Cardinal;
 
@@ -935,7 +937,7 @@ var
 
     function FaceNormal(const DeltaX, DeltaY: Integer): TVector3;
     begin
-      Result := FaceNormals.List^[Idx(I + DeltaX, J + DeltaY)];
+      Result := FaceNormals.L[Idx(I + DeltaX, J + DeltaY)];
     end;
 
   begin
@@ -956,7 +958,7 @@ var
   CoordNode: TCoordinateNode;
   NormalNode: TNormalNode;
   I, J: Cardinal;
-  IndexPtr: PLongInt;
+  IndexPtr: PInt32;
 begin
   { extract nodes from Node, assuming it was created by CreateTriangulatedNode }
   Transform := Node as TTransformNode;
@@ -991,7 +993,7 @@ begin
   { calculate Coord }
   for I := 0 to SubdivisionsX do
     for J := 0 to SubdivisionsZ do
-      CalculatePosition(I, J, Coord.List^[Idx(I, J)]);
+      CalculatePosition(I, J, Coord.L[Idx(I, J)]);
   CoordNode.FdPoint.Changed;
 
   { calculate Normals }
@@ -1001,17 +1003,17 @@ begin
     { calculate per-face (flat) normals }
     for I := 0 to SubdivisionsX - 1 do
       for J := 0 to SubdivisionsZ - 1 do
-        CalculateFaceNormal(I, J, FaceNormals.List^[Idx(I, J)]);
+        CalculateFaceNormal(I, J, FaceNormals.L[Idx(I, J)]);
     { calculate smooth vertex normals }
     for I := 0 to SubdivisionsX - 1 do
       for J := 0 to SubdivisionsZ - 1 do
-        CalculateNormal(I, J, Normal.List^[Idx(I, J)]);
+        CalculateNormal(I, J, Normal.L[Idx(I, J)]);
   finally FreeAndNil(FaceNormals) end;
   NormalNode.FdVector.Changed;
 
   { calculate Index }
   Index.Count := (SubdivisionsX - 1) * (SubdivisionsZ * 2 + 1);
-  IndexPtr := PLongInt(Index.List);
+  IndexPtr := PInt32(Index.L);
   for I := 1 to SubdivisionsX - 1 do
   begin
     for J := 0 to SubdivisionsZ - 1 do
@@ -1024,7 +1026,7 @@ begin
     Inc(IndexPtr);
   end;
   // make sure our Index.Count was set exactly to what we needed
-  Assert((PtrUInt(IndexPtr) - PtrUInt(Index.List)) div SizeOf(LongInt) = Index.Count);
+  Assert((PtrUInt(IndexPtr) - PtrUInt(Index.L)) div SizeOf(Int32) = Index.Count);
   Geometry.FdIndex.Changed;
 end;
 
@@ -1589,7 +1591,7 @@ var
   V: TVector4;
 begin
   V := Vec.Value;
-  V.InternalData[Layer - 1] := Value;
+  V.Data[Layer - 1] := Value;
   Vec.Send(V);
 end;
 
@@ -1746,7 +1748,7 @@ begin
   Scene := TCastleScene.Create(Self);
   //Scene.ProcessEvents := true; // not necessary right now for anything
   Scene.SetTransient;
-  Scene.Spatial := [ssDynamicCollisions]; // following FPreciseCollisions = true
+  Scene.PreciseCollisions := true;
   Add(Scene);
 
   Appearance := TAppearanceNode.Create;
@@ -1776,6 +1778,23 @@ begin
   {$I auto_generated_persistent_vectors/tcastleterrain_persistent_vectors.inc}
   {$undef read_implementation_destructor}
   inherited;
+
+  { Avoid Appearance having invalid reference in Appearance.Scene.
+    Note that Scene was freed in "inherited" above,
+    but Appearance.Scene may not have been cleared,
+    because of optimization in TCastleSceneCore.FreeRootNode doing:
+
+      if (FRootNode <> nil) and (not FOwnsRootNode) then
+        FRootNode.UnregisterScene;
+
+    See comments in TCastleSceneCore.FreeRootNode about it.
+
+    To avoid crashes at examples/terrain exit, we have to clear
+    Appearance.Scene manually, otherwise TAppearanceNode will try to access
+    it in MoveShapeAssociations. }
+  if Appearance <> nil then
+    Appearance.UnregisterScene;
+
   // remove after RootNode containing this is removed too
   FreeAndNil(Appearance);
 end;
@@ -1824,6 +1843,16 @@ procedure TCastleTerrain.UpdateGeometry;
     Result := Transform;
   end;
 
+  { Update associated collider, e.g. to update TCastleMeshCollider to reflect new terrain. }
+  procedure UpdateCollider;
+  var
+    C: TCastleCollider;
+  begin
+    C := FindBehavior(TCastleCollider) as TCastleCollider;
+    if C <> nil then
+      C.InternalTransformChanged(Self);
+  end;
+
 var
   Root: TX3DRootNode;
   Range: TFloatRectangle;
@@ -1868,6 +1897,8 @@ begin
       assign TCastleTerrain.Data to TCastleTerrainImage, to nil, again to TCastleTerrainImage. }
     TerrainNode := nil;
   end;
+
+  UpdateCollider;
 end;
 
 function TCastleTerrain.GetLayer(const Index: Integer): TCastleTerrainLayer;
@@ -1978,12 +2009,7 @@ begin
   if FPreciseCollisions <> Value then
   begin
     FPreciseCollisions := Value;
-    if Value then
-      Scene.Spatial := [ssDynamicCollisions]
-    else
-      Scene.Spatial := [];
-    { Note that we don't add ssRendering,
-      would be largely useless as primitives are usually just 1 shape in an internal scene. }
+    Scene.PreciseCollisions := Value;
   end;
 end;
 
@@ -2001,13 +2027,23 @@ begin
     Result := inherited PropertySections(PropertyName);
 end;
 
+function TCastleTerrain.HasColliderMesh: Boolean;
+begin
+  Result := true;
+end;
+
+procedure TCastleTerrain.ColliderMesh(const TriangleEvent: TTriangleEvent);
+begin
+  Scene.ColliderMesh(TriangleEvent);
+end;
+
 {$define read_implementation_methods}
 {$I auto_generated_persistent_vectors/tcastleterrain_persistent_vectors.inc}
 {$undef read_implementation_methods}
 
 initialization
-  RegisterSerializableComponent(TCastleTerrainImage, 'Terrain Data (Experimental)/Image Data');
-  RegisterSerializableComponent(TCastleTerrainNoise, 'Terrain Data (Experimental)/Noise Data');
-  RegisterSerializableComponent(TCastleTerrainCombine, 'Terrain Data (Experimental)/Combine Data');
-  RegisterSerializableComponent(TCastleTerrain, 'Terrain (Experimental)/Terrain');
+  RegisterSerializableComponent(TCastleTerrainImage, ['Terrain Data (Experimental)', 'Image Data']);
+  RegisterSerializableComponent(TCastleTerrainNoise, ['Terrain Data (Experimental)', 'Noise Data']);
+  RegisterSerializableComponent(TCastleTerrainCombine, ['Terrain Data (Experimental)', 'Combine Data']);
+  RegisterSerializableComponent(TCastleTerrain, ['Terrain (Experimental)']);
 end.

@@ -40,6 +40,7 @@ type
     procedure TestStateSize;
     procedure TestStateSize2;
     procedure TestViewportWithoutCamera;
+    procedure TestPrepareResourcesWithoutContextOpen;
   end;
 
 implementation
@@ -48,7 +49,7 @@ uses SysUtils, Classes, Math,
   CastleWindow, CastleControls, CastleStringUtils, CastleKeysMouse,
   CastleUIControls, CastleRectangles, CastleOnScreenMenu, CastleComponentSerialize,
   CastleCameras, {$ifdef FPC}CastleSceneManager,{$endif} CastleVectors,
-  CastleTransform, CastleScene, CastleApplicationProperties, CastleUIState,
+  CastleTransform, CastleScene, CastleApplicationProperties,
   CastleViewport;
 
 procedure TTestCastleWindow.Test1;
@@ -368,6 +369,9 @@ var
     AssertTrue(Viewport.PositionToWorldPlane(ScreenPos, true, -10, WorldPlaneResult));
     AssertVectorEquals(CorrectWorldPlaneResult, WorldPlaneResult, 0.1);
 
+    AssertTrue(Viewport.PositionToWorldPlane(ScreenPos, true, 2, -10, WorldPlaneResult));
+    AssertVectorEquals(CorrectWorldPlaneResult, WorldPlaneResult, 0.1);
+
     Pos2D := Viewport.PositionTo2DWorld(ScreenPos, true);
     AssertVectorEquals(CorrectPos2D, Pos2D, 0.1);
   end;
@@ -424,18 +428,18 @@ procedure TTestCastleWindow.TestStateAutoStop;
     begin
       TCastleControl.MainControl := Window;
       CastleApp := TCastleApp.Create(Window);
-      TUIState.Current := CastleApp;
+      TCastleView.Current := CastleApp;
       Window.Container.UIScaling := usNone;
     end;
 }
 
 var
   Window: TCastleWindow;
-  SomeState: TUIState;
+  SomeState: TCastleView;
 begin
   {$ifdef CASTLE_TESTER}
   if not IsConsoleMode then
-    Exit; // TODO: We can test TUIState only in console mode
+    Exit; // TODO: We can test TCastleView only in console mode
   {$endif}
 
   {$ifndef CASTLE_TESTER}
@@ -449,8 +453,8 @@ begin
     {$endif}
 
     Window.Open;
-    SomeState := TUIState.Create(Window);
-    TUIState.Current := SomeState;
+    SomeState := TCastleView.Create(Window);
+    TCastleView.Current := SomeState;
   finally
     { let freeing Window cause everything else:
       - freeing of SomeState
@@ -470,7 +474,7 @@ begin
 end;
 
 type
-  TStateTestingSize = class(TUIState)
+  TStateTestingSize = class(TCastleView)
   public
     W, H: Single;
     TestCase: TCastleTestCase;
@@ -512,7 +516,7 @@ var
 begin
   {$ifdef CASTLE_TESTER}
   if not IsConsoleMode then
-    Exit; // TODO: We can test TUIState only in console mode
+    Exit; // TODO: We can test TCastleView only in console mode
   {$endif}
 
   {$ifndef CASTLE_TESTER}
@@ -541,7 +545,7 @@ begin
       SameValue(StateTesting.EffectiveRect.Width, 160) or
       SameValue(StateTesting.EffectiveRect.Height, 90));
 
-    TUIState.Current := StateTesting;
+    TCastleView.Current := StateTesting;
   finally
     {$ifndef CASTLE_TESTER}
     FreeAndNil(Window);
@@ -555,7 +559,7 @@ begin
 end;
 
 type
-  TStateTestingSize2 = class(TUIState)
+  TStateTestingSize2 = class(TCastleView)
   public
     W, H: Single;
     TestCase: TCastleTestCase;
@@ -597,7 +601,7 @@ var
 begin
   {$ifdef CASTLE_TESTER}
   if not IsConsoleMode then
-    Exit; // TODO: We can test TUIState only in console mode
+    Exit; // TODO: We can test TCastleView only in console mode
   {$endif}
 
   {$ifndef CASTLE_TESTER}
@@ -626,7 +630,7 @@ begin
       SameValue(StateTesting.EffectiveRect.Width, 200) or
       SameValue(StateTesting.EffectiveRect.Height, 400));
 
-    TUIState.Current := StateTesting;
+    TCastleView.Current := StateTesting;
   finally
     {$ifndef CASTLE_TESTER}
     FreeAndNil(Window);
@@ -639,7 +643,6 @@ begin
   Application.MainWindow := nil;
   {$endif}
 end;
-
 
 procedure TTestCastleWindow.TestViewportWithoutCamera;
 var
@@ -673,6 +676,55 @@ begin
     V.BeforeRender;
     V.Render;
     V.RenderOverChildren;
+
+    FreeAndNil(V);
+  finally
+    {$ifndef CASTLE_TESTER}
+    FreeAndNil(Window);
+    {$else}
+    DestroyWindowForTest;
+    {$endif}
+  end;
+end;
+
+procedure TTestCastleWindow.TestPrepareResourcesWithoutContextOpen;
+var
+  Window: TCastleWindow;
+  V: TCastleViewport;
+  DummyHandleInput: Boolean;
+  Scene, Scene2: TCastleScene;
+begin
+  {$ifndef CASTLE_TESTER}
+  Window := TCastleWindow.Create(nil);
+  {$else}
+  Window := CreateWindowForTest;
+  {$endif}
+  try
+    V := TCastleViewport.Create(Window);
+
+    { test V.PrepareResources has no problem called before context open }
+    V.PrepareResources;
+
+    Scene := TCastleScene.Create(Window);
+    Scene.Load('castle-data:/game/scene.x3d');
+    V.Items.Add(Scene);
+
+    { test V.PrepareResources has no problem called before context open,
+      when it has some scene }
+    V.PrepareResources;
+
+    Scene2 := TCastleScene.Create(Window);
+    Scene2.Load('castle-data:/knight_resource/knight.gltf');
+    V.Items.Add(Scene2);
+
+    { test V.PrepareResources has no problem called before context open,
+      when it has 2 scenes }
+    V.PrepareResources;
+
+    Window.Visible := false;
+    Window.Open;
+
+    V.PrepareResources;
 
     FreeAndNil(V);
   finally

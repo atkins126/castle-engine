@@ -1,5 +1,5 @@
 {
-  Copyright 2006-2022 Michalis Kamburelis.
+  Copyright 2006-2023 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -229,7 +229,7 @@ begin
   ]);
 
   FGeometry := TLineSetNode.Create;
-  FGeometry.SetVertexCount([2, 2, 2]);
+  FGeometry.Mode := lmPair;
   FGeometry.Coord := FCoord;
 
   Material := TUnlitMaterialNode.Create;
@@ -530,7 +530,7 @@ begin
   FScene.Load(Root, true);
   FScene.Collides := false;
   FScene.Pickable := false;
-  FScene.CastShadowVolumes := false;
+  FScene.CastShadows := false;
   FScene.ExcludeFromStatistics := true;
   FScene.InternalExcludeFromParentBoundingVolume := true;
   FScene.InternalExistsOnlyInMeaningfulParents := true;

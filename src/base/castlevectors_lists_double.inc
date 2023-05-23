@@ -1,5 +1,6 @@
+{%MainUnit castlevectors.pas}
 {
-  Copyright 2003-2018 Michalis Kamburelis.
+  Copyright 2003-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -147,7 +148,7 @@ begin
 
   Count := V1.Count;
   for I := 0 to Count - 1 do
-    List^[I] := Lerp(Fraction, V1.List^[I], V2.List^[I]);
+    L[I] := Lerp(Fraction, V1.L[I], V2.L[I]);
 end;
 
 function TVector2DoubleList.Equals(SecondValue: TObject): boolean;
@@ -160,7 +161,7 @@ begin
     Result := Count = TVector2DoubleList(SecondValue).Count;
     if Result then
       for I := 0 to Count - 1 do
-        if not TVector2Double.Equals(TVector2DoubleList(SecondValue).List^[I], List^[I]) then
+        if not TVector2Double.Equals(TVector2DoubleList(SecondValue).L[I], L[I]) then
         begin
           Result := false;
           Exit;
@@ -178,7 +179,7 @@ begin
     Result := Count = TVector2DoubleList(SecondValue).Count;
     if Result then
       for I := 0 to Count - 1 do
-        if not TVector2Double.PerfectlyEquals(TVector2DoubleList(SecondValue).List^[I], List^[I]) then
+        if not TVector2Double.PerfectlyEquals(TVector2DoubleList(SecondValue).L[I], L[I]) then
         begin
           Result := false;
           Exit;
@@ -216,7 +217,7 @@ begin
 
   Count := V1.Count;
   for I := 0 to Count - 1 do
-    List^[I] := Lerp(Fraction, V1.List^[I], V2.List^[I]);
+    L[I] := Lerp(Fraction, V1.L[I], V2.L[I]);
 end;
 
 function TVector3DoubleList.Equals(SecondValue: TObject): boolean;
@@ -229,7 +230,7 @@ begin
     Result := Count = TVector3DoubleList(SecondValue).Count;
     if Result then
       for I := 0 to Count - 1 do
-        if not TVector3Double.Equals(TVector3DoubleList(SecondValue).List^[I], List^[I]) then
+        if not TVector3Double.Equals(TVector3DoubleList(SecondValue).L[I], L[I]) then
         begin
           Result := false;
           Exit;
@@ -247,7 +248,7 @@ begin
     Result := Count = TVector3DoubleList(SecondValue).Count;
     if Result then
       for I := 0 to Count - 1 do
-        if not TVector3Double.PerfectlyEquals(TVector3DoubleList(SecondValue).List^[I], List^[I]) then
+        if not TVector3Double.PerfectlyEquals(TVector3DoubleList(SecondValue).L[I], L[I]) then
         begin
           Result := false;
           Exit;
@@ -285,7 +286,7 @@ begin
 
   Count := V1.Count;
   for I := 0 to Count - 1 do
-    List^[I] := Lerp(Fraction, V1.List^[I], V2.List^[I]);
+    L[I] := Lerp(Fraction, V1.L[I], V2.L[I]);
 end;
 
 function TVector4DoubleList.Equals(SecondValue: TObject): boolean;
@@ -298,7 +299,7 @@ begin
     Result := Count = TVector4DoubleList(SecondValue).Count;
     if Result then
       for I := 0 to Count - 1 do
-        if not TVector4Double.Equals(TVector4DoubleList(SecondValue).List^[I], List^[I]) then
+        if not TVector4Double.Equals(TVector4DoubleList(SecondValue).L[I], L[I]) then
         begin
           Result := false;
           Exit;
@@ -316,7 +317,7 @@ begin
     Result := Count = TVector4DoubleList(SecondValue).Count;
     if Result then
       for I := 0 to Count - 1 do
-        if not TVector4Double.PerfectlyEquals(TVector4DoubleList(SecondValue).List^[I], List^[I]) then
+        if not TVector4Double.PerfectlyEquals(TVector4DoubleList(SecondValue).L[I], L[I]) then
         begin
           Result := false;
           Exit;
@@ -354,7 +355,7 @@ begin
 
   Count := V1.Count;
   for I := 0 to Count - 1 do
-    List^[I] := Lerp(Fraction, V1.List^[I], V2.List^[I]);
+    L[I] := Lerp(Fraction, V1.L[I], V2.L[I]);
 end;
 
 function TMatrix3DoubleList.Equals(SecondValue: TObject): boolean;
@@ -367,7 +368,7 @@ begin
     Result := Count = TMatrix3DoubleList(SecondValue).Count;
     if Result then
       for I := 0 to Count - 1 do
-        if not TMatrix3Double.Equals(TMatrix3DoubleList(SecondValue).List^[I], List^[I]) then
+        if not TMatrix3Double.Equals(TMatrix3DoubleList(SecondValue).L[I], L[I]) then
         begin
           Result := false;
           Exit;
@@ -385,7 +386,7 @@ begin
     Result := Count = TMatrix3DoubleList(SecondValue).Count;
     if Result then
       for I := 0 to Count - 1 do
-        if not TMatrix3Double.PerfectlyEquals(TMatrix3DoubleList(SecondValue).List^[I], List^[I]) then
+        if not TMatrix3Double.PerfectlyEquals(TMatrix3DoubleList(SecondValue).L[I], L[I]) then
         begin
           Result := false;
           Exit;
@@ -423,7 +424,7 @@ begin
 
   Count := V1.Count;
   for I := 0 to Count - 1 do
-    List^[I] := Lerp(Fraction, V1.List^[I], V2.List^[I]);
+    L[I] := Lerp(Fraction, V1.L[I], V2.L[I]);
 end;
 
 function TMatrix4DoubleList.Equals(SecondValue: TObject): boolean;
@@ -436,7 +437,7 @@ begin
     Result := Count = TMatrix4DoubleList(SecondValue).Count;
     if Result then
       for I := 0 to Count - 1 do
-        if not TMatrix4Double.Equals(TMatrix4DoubleList(SecondValue).List^[I], List^[I]) then
+        if not TMatrix4Double.Equals(TMatrix4DoubleList(SecondValue).L[I], L[I]) then
         begin
           Result := false;
           Exit;
@@ -454,7 +455,7 @@ begin
     Result := Count = TMatrix4DoubleList(SecondValue).Count;
     if Result then
       for I := 0 to Count - 1 do
-        if not TMatrix4Double.PerfectlyEquals(TMatrix4DoubleList(SecondValue).List^[I], List^[I]) then
+        if not TMatrix4Double.PerfectlyEquals(TMatrix4DoubleList(SecondValue).L[I], L[I]) then
         begin
           Result := false;
           Exit;

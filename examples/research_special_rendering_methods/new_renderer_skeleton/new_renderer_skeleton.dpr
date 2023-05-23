@@ -62,7 +62,7 @@ type
       const ParentInfo: PTraversingInfo): TShape; override;
   public
     procedure PrepareResources(const Options: TPrepareResourcesOptions;
-      const ProgressStep: boolean; const Params: TPrepareParams); override;
+      const Params: TPrepareParams); override;
     procedure LocalRender(const Params: TRenderParams); override;
   end;
 
@@ -74,7 +74,7 @@ end;
 
 procedure TCastleSceneVulkan.PrepareResources(
   const Options: TPrepareResourcesOptions;
-  const ProgressStep: boolean; const Params: TPrepareParams);
+  const Params: TPrepareParams);
 var
   ShapeList: TShapeList;
   Shape: TShape;
@@ -112,18 +112,11 @@ end;
 procedure TCastleSceneVulkan.LocalRender(const Params: TRenderParams);
 
   function GetSceneModelView: TMatrix4;
-  var
-    CameraMatrix: PMatrix4;
   begin
-    if Params.RenderingCamera.RotationOnly then
-      CameraMatrix := @Params.RenderingCamera.RotationMatrix
-    else
-      CameraMatrix := @Params.RenderingCamera.Matrix;
-
     if Params.TransformIdentity then
-      Result := CameraMatrix^
+      Result := Params.RenderingCamera.CurrentMatrix
     else
-      Result := CameraMatrix^ * Params.Transform^;
+      Result := Params.RenderingCamera.CurrentMatrix * Params.Transform^;
   end;
 
   function PrimitiveToStr(const Primitive: TGeometryPrimitive): string;
@@ -214,7 +207,7 @@ begin
 
     Scene := TCastleSceneVulkan.Create(Application);
     Scene.Load('castle-data:/car.gltf');
-    Scene.PrepareResources([], false, nil);
+    Scene.PrepareResources([], nil);
 
     { Prepare rendering parameters
       (this is done by TCastleViewport in normal circumstances).

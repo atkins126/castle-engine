@@ -1,5 +1,6 @@
+{%MainUnit x3dfields.pas}
 {
-  Copyright 2002-2018 Michalis Kamburelis.
+  Copyright 2002-2022 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -128,7 +129,7 @@ end;
 { TX3DFileItemList --------------------------------------------------------- }
 
 function IsSmallerPositionInParent(
-  {$ifdef FPC}constref{$else}const{$endif} A, B: TX3DFileItem): Integer;
+  {$ifdef GENERICS_CONSTREF}constref{$else}const{$endif} A, B: TX3DFileItem): Integer;
 begin
   Result := A.PositionInParent - B.PositionInParent;
   if Result = 0 then

@@ -1,3 +1,4 @@
+{%MainUnit castlevectors.pas}
 {
   Copyright 2003-2022 Michalis Kamburelis.
 
@@ -110,13 +111,17 @@ function RotatePointAroundAxis(const AxisAngle: TVector4; const Point: TVector3)
   if V[0] = V[1] (and are larger than other vector component) we return 0.
   MaxAbsVectorCoord compares the absolute value of components.
   @groupBegin }
-function MaxVectorCoord(const V: TVector2): integer; overload;
+function MaxVectorCoord(const V: TVector2): Integer; overload;
 function MaxVectorCoord(const V: TVector3): T3DAxis; overload;
-function MaxVectorCoord(const V: TVector4): integer; overload;
-function MaxAbsVectorCoord(const V: TVector2): integer; overload;
+function MaxVectorCoord(const V: TVector4): Integer; overload;
+function MaxAbsVectorCoord(const V: TVector2): Integer; overload;
 function MaxAbsVectorCoord(const V: TVector3): T3DAxis; overload;
-function MaxAbsVectorCoord(const V: TVector4): integer; overload;
+function MaxAbsVectorCoord(const V: TVector4): Integer; overload;
 { @groupEnd }
+
+function MinAbsVectorCoord(const V: TVector2): Integer; overload;
+function MinAbsVectorCoord(const V: TVector3): T3DAxis; overload;
+function MinAbsVectorCoord(const V: TVector4): Integer; overload;
 
 function MinVectorCoord(const V: TVector3): T3DAxis; overload;
 
@@ -522,10 +527,6 @@ function TranslationMatrix(const Transl: TVector3): TMatrix4; overload;
 procedure TranslationMatrices(const X, Y, Z: Single; out Matrix, InvertedMatrix: TMatrix4); overload;
 procedure TranslationMatrices(const Transl: TVector3; out Matrix, InvertedMatrix: TMatrix4); overload;
 
-{ Extract translation from matrix.
-  This performs a subset of MatrixDecompose. }
-function TranslationFromMatrix(const M: TMatrix4): TVector3;
-
 { Multiply matrix M by translation matrix.
 
   This is equivalent to M := M * TranslationMatrix(Transl),
@@ -762,6 +763,9 @@ function SmoothTowards(const Source, Target: TVector2;
   const SecondsPassed, Speed: Single): TVector2; overload;
 function SmoothTowards(const Source, Target: TVector3;
   const SecondsPassed, Speed: Single): TVector3; overload;
+
+const
+  NoScale: TVector3 = (X: 1; Y: 1; Z: 1);
 
 {$endif read_interface}
 
@@ -1126,7 +1130,7 @@ begin
   Result := RotatePointAroundAxisRad(AxisAngle.W, Point, Axis);
 end;
 
-function MaxVectorCoord(const V: TVector2): integer;
+function MaxVectorCoord(const V: TVector2): Integer;
 begin
   Result := 0;
   if V.Y > V[Result] then Result := 1;
@@ -1149,7 +1153,7 @@ begin
   if V.Z < V[Result] then Result := 2;
 end;
 
-function MaxVectorCoord(const V: TVector4): integer;
+function MaxVectorCoord(const V: TVector4): Integer;
 begin
   Result := 0;
   if V.Y > V[Result] then Result := 1;
@@ -1157,7 +1161,7 @@ begin
   if V.W > V[Result] then Result := 3;
 end;
 
-function MaxAbsVectorCoord(const V: TVector2): integer;
+function MaxAbsVectorCoord(const V: TVector2): Integer;
 begin
   Result := 0;
   if Abs(V.Y) > Abs(V[Result]) then Result := 1;
@@ -1173,7 +1177,7 @@ begin
   New := Abs(V.Z); if New > Max then begin Result := 2; { Max := New; not needed anymore } end;
 end;
 
-function MaxAbsVectorCoord(const V: TVector4): integer;
+function MaxAbsVectorCoord(const V: TVector4): Integer;
 var
   Max, New: Single;
 begin
@@ -1182,6 +1186,33 @@ begin
   New := Abs(V.Y); if New > Max then begin Result := 1; Max := New; end;
   New := Abs(V.Z); if New > Max then begin Result := 2; Max := New; end;
   New := Abs(V.W); if New > Max then begin Result := 3; { Max := New; not needed anymore } end;
+end;
+
+function MinAbsVectorCoord(const V: TVector2): Integer;
+begin
+  Result := 0;
+  if Abs(V.Y) < Abs(V[Result]) then Result := 1;
+end;
+
+function MinAbsVectorCoord(const V: TVector3): T3DAxis;
+var
+  Min, New: Single;
+begin
+  Result := 0;
+  Min := Abs(V.X);
+  New := Abs(V.Y); if New < Min then begin Result := 1; Min := New; end;
+  New := Abs(V.Z); if New < Min then begin Result := 2; { Min := New; not needed anymore } end;
+end;
+
+function MinAbsVectorCoord(const V: TVector4): Integer;
+var
+  Min, New: Single;
+begin
+  Result := 0;
+  Min := Abs(V.X);
+  New := Abs(V.Y); if New < Min then begin Result := 1; Min := New; end;
+  New := Abs(V.Z); if New < Min then begin Result := 2; Min := New; end;
+  New := Abs(V.W); if New < Min then begin Result := 3; { Min := New; not needed anymore } end;
 end;
 
 procedure SortAbsVectorCoord(const V: TVector3;
@@ -1257,7 +1288,7 @@ begin
 
   { Since LineVector[NonZeroIndex] <> 0, we know that we can find exactly
     one point on this line by assuming that Point[NonZeroIndex] = 0. }
-  Line0.InternalData[NonZeroIndex] := 0;
+  Line0.Data[NonZeroIndex] := 0;
   RestOf3DCoords(NonZeroIndex, Index1, Index2);
 
   { Now we must solve
@@ -1296,7 +1327,7 @@ begin
     Sum_Index2 must be <> 0, since we know that Line0[Index2] must be uniquely
     determined ? Right ? TODO -- I'm not sure, how to prove this simply ?
   }
-  Line0.InternalData[Index2] := - Sum_3 / Sum_Index2;
+  Line0.Data[Index2] := - Sum_3 / Sum_Index2;
 
   { Note we have
       PlaneWithNonZeroIndex1^[Index1] * Line0[Index1] +
@@ -1304,7 +1335,7 @@ begin
       PlaneWithNonZeroIndex1^.W = 0
     All is known except Line0[Index1],
     PlaneWithNonZeroIndex1^[Index1] is for sure <> 0. }
-  Line0.InternalData[Index1] := -
+  Line0.Data[Index1] := -
     (PlaneWithNonZeroIndex1^[Index2] * Line0[Index2] +
      PlaneWithNonZeroIndex1^.W) /
     PlaneWithNonZeroIndex1^[Index1];
@@ -1937,8 +1968,8 @@ begin
     Let Result[AxisOther] = -1 and then we can construct
     Result[AxisGood] = LineVector[AxisOther] / LineVector[AxisGood].
   }
-  Result.InternalData[AxisOther] := -1;
-  Result.InternalData[AxisGood] := LineVector.InternalData[AxisOther] / LineVector[AxisGood];
+  Result.Data[AxisOther] := -1;
+  Result.Data[AxisGood] := LineVector.Data[AxisOther] / LineVector[AxisGood];
   Result.Z := - (Result.X * Line0.X + Result.Y * Line0.Y);
 end;
 
@@ -1973,7 +2004,7 @@ begin
     For maximum numeric stability, choose largest coordinate. }
   MaxCoord := MaxAbsVectorCoord(PlaneDir);
   PlanePoint := TVector3.Zero;
-  PlanePoint.InternalData[MaxCoord] := -Plane.W / Plane[MaxCoord];
+  PlanePoint.Data[MaxCoord] := -Plane.W / Plane[MaxCoord];
 
   NewPlanePoint := Matrix.MultPoint(PlanePoint);
   NewPlaneDir := Matrix.MultDirection(PlaneDir);
@@ -2243,11 +2274,6 @@ begin
   InvertedMatrix.Data[3, 0] := -Transl.X;
   InvertedMatrix.Data[3, 1] := -Transl.Y;
   InvertedMatrix.Data[3, 2] := -Transl.Z;
-end;
-
-function TranslationFromMatrix(const M: TMatrix4): TVector3;
-begin
-  Result := Vector3(M.Data[3, 0], M.Data[3, 1], M.Data[3, 2]);
 end;
 
 procedure MultMatrixTranslation(var M: TMatrix4;

@@ -1,6 +1,6 @@
 {%MainUnit castleuicontrols.pas}
 {
-  Copyright 2010-2022 Michalis Kamburelis.
+  Copyright 2010-2023 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -66,6 +66,7 @@
     LastPositionForTooltipTime: TTimerResult;
     Mouse3d: T3DConnexionDevice;
     Mouse3dPollTimer: Single;
+    FDpi: Single;
     FUIScaling: TUIScaling;
     FUIReferenceWidth: Single;
     FUIReferenceHeight: Single;
@@ -86,8 +87,14 @@
     FInputInspector: TInputInspector;
     FInspector: TCastleUserInterface; //< always TCastleInspector
 
+    function GetView: TCastleView;
+    procedure SetView(const Value: TCastleView);
+    function GetFrontView: TCastleView;
+    function GetViewStack(const Index: Integer): TCastleView;
+
     function UseForceCaptureInput: boolean;
     function TryGetFingerOfControl(const C: TCastleUserInterface; out Finger: TFingerIndex): boolean;
+    procedure SetDpi(const Value: Single);
     procedure SetUIScaling(const Value: TUIScaling);
     procedure SetUIReferenceWidth(const Value: Single);
     procedure SetUIReferenceHeight(const Value: Single);
@@ -110,6 +117,8 @@
     { Create / destroy FInspector. }
     procedure ToggleInspector;
   private
+    FViewStack: TCastleViewList;
+    FDisableStackChange: Cardinal;
     FControls: TInternalChildrenControls;
     procedure ControlsVisibleChange(const Sender: TCastleUserInterface;
       const Changes: TCastleUserInterfaceChanges; const ChangeInitiatedByChildren: boolean);
@@ -119,8 +128,21 @@
   protected
     procedure Notification(AComponent: TComponent; Operation: TOperation); override;
 
-    { These should only be get/set by a container owner,
+    { These properties are protected,
+      they should only be get/set by a container owner,
       like TCastleWindow or TCastleControl.
+
+      @deprecated These events, just like similar public events
+      at TCastleWindow or TCastleControl, are deprecated.
+      Because
+
+      1. Most of them are pointers to global routines, not methods ("of object")
+      and we generally prefer to have pointers to methods ("of object").
+
+      2. We advise to manage things by overriding methods,
+      or using events, of TCastleUserInterface and descendants.
+      This includes using methods of TCastleView.
+
       @groupBegin }
     property OnOpen: TContainerEvent read FOnOpen write FOnOpen;
     property OnOpenObject: TContainerObjectEvent read FOnOpenObject write FOnOpenObject;
@@ -161,18 +183,18 @@
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
 
-    { Propagate the event to all the @link(Controls) and to our own OnXxx callbacks.
+    { Propagate the event to all the @link(Controls).
+      You can call these methods explicitly if you want to "fake" some event,
+      e.g. fake pressing or releasing a key by calling @link(EventPress) or
+      @link(EventRelease).
 
-      These methods are called automatically when necessary,
-      so usually you don't call them. But in rare cases, it makes sense
-      to "fake" some event by calling these methods.
+      Deprecated: these methods also call our (deprecated) callbacks like OnPress.
 
-      Most of these methods are called automatically
-      by the container owner, like TCastleWindow or TCastleControl.
-      Some are called by @link(EventUpdate),
-      which is special in this regard, as @link(EventUpdate) is not only
-      responsible for calling @link(TCastleUserInterface.Update) on all @link(Controls),
-      it also calls
+      These methods are called automatically by TCastleWindow or TCastleControl.
+      So if you don't need to "fake" any event, you should not call them from
+      your application.
+
+      Note: @link(EventUpdate) is special in that it also calls (for now)
       @link(EventJoyAxisMove),
       @link(EventJoyButtonPress),
       @link(EventSensorRotation),
@@ -194,6 +216,16 @@
     function EventSensorRotation(const X, Y, Z, Angle: Double; const SecondsPassed: Single): boolean; virtual;
     function EventSensorTranslation(const X, Y, Z, Length: Double; const SecondsPassed: Single): boolean; virtual;
     { @groupEnd }
+
+    { Dots (pixels) per inch. Describes how many pixels fit on a physical inch.
+      So this is determined by the screen resolution in pixels,
+      and by the physical size of the device.
+
+      Some systems may expose a value that actually reflects user preference
+      "how to scale the user-interface", where 96 (DefaultDpi) is default.
+      So do not depend that it is actually related to the physical monitor size.
+      See https://developer.gnome.org/gdk2/stable/GdkScreen.html#gdk-screen-set-resolution . }
+    property Dpi: Single read FDpi write SetDpi {$ifdef FPC}default DefaultDpi{$endif};
 
     { Get the default UI scale of controls.
       Useful only when GLInitialized, when we know that our size is sensible.
@@ -307,9 +339,6 @@
       See @link(TTouch.Position) for a documentation how this is expressed. }
     property MousePosition: TVector2
       read GetMousePosition write SetMousePosition;
-
-    { Dots per inch, specifying the relation of screen pixels to physical size. }
-    function Dpi: Single; virtual;
 
     { Currently pressed mouse buttons. When this changes, you're always
       notified by @link(OnPress) or @link(OnRelease) events.
@@ -706,11 +735,80 @@
     { @deprecated Use InputInspector.Key now. }
     property InspectorKey: TKey read GetInspectorKey write SetInspectorKey;
       {$ifdef FPC}deprecated 'use InputInspector';{$endif}
+
+    { Current view. Simply assign to this property to change the current view.
+
+      In case multiple views are active (only possible
+      if you used the @link(PushView) method), this property returns the @italic(bottom) view
+      (use @link(FrontView) to get @italic(top) view).
+      Setting this property resets whole view stack.
+
+      @bold(When is it allowed to change the view?)
+
+      While in theory you can change current view stack (assigning @link(View)
+      or using @link(PushView) / @link(PopView)) at any moment,
+      but remember that stopping the view frees also the view UI.
+      So you should not change the current view stack within events/overriden methods
+      of classes like TCastleUserInterface, TCastleTransform, TCastleBehavior
+      that could be destroyed by the view stop.
+
+      The simpler advise is: @italic(Assign to @link(View) or use @link(PushView) / @link(PopView)
+      only from the overridden TCastleView methods.
+      Like TMyView.Update or TMyView.Press).
+
+      Note that you cannot change current view stack when another change is in progress.
+      That is, you cannot change view from within TMyView.Start/Resume/Pause/Stop.
+    }
+    property View: TCastleView read GetView write SetView;
+
+    { The view in the front (top-most view on the stack).
+
+      In case you used @link(PushView), this returns the top-most (most recently pushed) view.
+
+      If there is only one (or none) view, e.g. because you never used @link(PushView),
+      then this property returns the same thing as @link(View). }
+    property FrontView: TCastleView read GetFrontView;
+
+    { Pushing the view adds it at the top of the view stack,
+      this makes new view to be displayed on top of previous ones.
+
+      The view known as @link(View) is conceptually at the bottom of view stack, always.
+      When it is nil, then pushing new view sets the @link(View) view.
+      Otherwise @link(View) view is left as-it-is, new view is added on top. }
+    procedure PushView(const NewView: TCastleView);
+
+    { Pop the current top-most view, reversing the @link(PushView) operation. }
+    procedure PopView; overload;
+
+    { Pop the current top-most view, reversing the @link(PushView) operation,
+      also checking whether the current top-most view is as expected.
+
+      Makes a warning, and does nothing, if the current top-most view
+      is different than indicated. This is usually a safer (more chance
+      to easily catch bugs) version of PopView than the parameter-less version. }
+    procedure PopView(const CheckFrontView: TCastleView); overload;
+
+    { Count of views in the view stack.
+      View stack is managed using @link(View) / @link(PushView) / @link(PopView). }
+    function ViewStackCount: Integer;
+
+    { Access any view within the view stack.
+      Use with indexes between 0 and ViewStackCount - 1.
+      View stack is managed using @link(View) / @link(PushView) / @link(PopView). }
+    property ViewStack [const Index: Integer]: TCastleView read GetViewStack;
   end;
 
 {$endif read_interface}
 
 {$ifdef read_implementation}
+
+{ Changing view during view Start/Stop/Push/Pop is not reliable,
+  e.g. doing TCastleContainer.PushView during another TCastleContainer.PushView will not result
+  in proper stack. }
+procedure ErrorStackChangeDisabled(const Message: String);
+begin
+  raise EInternalError.Create(Message);
+end;
 
 { TCastleContainer --------------------------------------------------------------- }
 
@@ -729,14 +827,15 @@ begin
   FTooltipDelay := DefaultTooltipDelay;
   FTooltipDistance := DefaultTooltipDistance;
   FCaptureInput := TFingerIndexCaptureMap.Create;
+  FDpi := DefaultDpi;
   FUIScaling := usNone;
   FUIExplicitScale := 1.0;
   FUIScale := 1.0; // default safe value, in case some TCastleUserInterface will look here
   FFocus := TCastleUserInterfaceList.Create(false);
   FNewFocus := TCastleUserInterfaceList.Create(false);
-  FFps := TFramesPerSecond.Create;
+  FFps := TFramesPerSecond.InternalCreate;
   FPressed := TKeysPressed.Create;
-  FContext := TRenderContext.Create;
+  FContext := TRenderContext.Create(nil);
   FBackgroundEnable := true;
   FBackgroundColor := DefaultBackgroundColor;
 
@@ -753,6 +852,11 @@ end;
 
 destructor TCastleContainer.Destroy;
 begin
+  if FViewStack <> nil then
+  begin
+    View := nil; // should clean FViewStack
+    FreeAndNil(FViewStack);
+  end;
   if RenderContext = FContext then
     RenderContext := nil;
   FreeAndNil(FContext);
@@ -801,7 +905,11 @@ var
   FingerIndex: TFingerIndex;
 begin
   if C = FTooltipParent then
+  begin
+    if FTooltipParent <> nil then
+      FTooltipParent.InternalSetTooltipExists(false);
     FTooltipParent := nil;
+  end;
 
   if FFocus <> nil then
   begin
@@ -1004,7 +1112,7 @@ begin
       for I := 0 to FFocus.Count - 1 do
         if FNewFocus.IndexOf(FFocus[I]) = -1 then
           FFocus[I].Focused := false;
-    end;
+    end
   end;
 
   { swap FFocus and FNewFocus, so that FFocus changes to new value,
@@ -1186,7 +1294,9 @@ procedure TCastleContainer.EventUpdate;
         This is especially useful when an invisible control like TCastleWalkNavigation
         covers other controls. }
       for I := Focus.Count - 1 downto 0 do
+        {$warnings off} // using deprecated, it should be internal
         if Focus[I].TooltipExists then
+        {$warnings on}
         begin
           NewTooltipParent := Focus[I];
           Break;
@@ -1195,6 +1305,10 @@ procedure TCastleContainer.EventUpdate;
 
     if FTooltipParent <> NewTooltipParent then
     begin
+      { hide tooltip }
+      if FTooltipParent <> nil then
+        FTooltipParent.InternalSetTooltipExists(false);
+
       FTooltipParent := NewTooltipParent;
 
       if FTooltipParent <> nil then
@@ -1203,6 +1317,8 @@ procedure TCastleContainer.EventUpdate;
         LastPositionForTooltip := MousePosition;
         { also update TooltipPosition }
         FTooltipPosition := MousePosition;
+        { show tooltip }
+        FTooltipParent.InternalSetTooltipExists(true);
       end;
 
       Invalidate;
@@ -1322,7 +1438,7 @@ var
   I: Integer;
   HandleInput: boolean;
 begin
-  Fps._UpdateBegin;
+  Fps.InternalUpdateBegin;
 
   if FInputInspector.IsPressed(Self, Fps.SecondsPassed) then
     ToggleInspector;
@@ -1596,7 +1712,7 @@ begin
     if RenderContext = FContext then
       RenderContext := nil;
     FreeAndNil(FContext);
-    FContext := TRenderContext.Create;
+    FContext := TRenderContext.Create(nil);
   end;
 end;
 
@@ -1747,29 +1863,31 @@ class procedure TCastleContainer.RenderControlPrepare(const ViewportRect: TRecta
 begin
   if GLFeatures.EnableFixedFunction then
   begin
-    { Set state that is guaranteed for Render2D calls,
+    { Set OpenGL state that is guaranteed for TCastleUserInterface.Render calls,
       but TCastleUserInterface.Render cannot change it carelessly. }
     {$ifndef OpenGLES}
-    glDisable(GL_LIGHTING);
+    RenderContext.FixedFunctionLighting := false;
     glDisable(GL_FOG);
     {$endif}
-    GLEnableTexture(CastleGLUtils.etNone);
+    GLEnableTexture(etNone);
   end;
 
-  glDisable(GL_DEPTH_TEST);
+  RenderContext.DepthTest := false;
 
   RenderContext.Viewport := ViewportRect;
   OrthoProjection(FloatRectangle(0, 0, ViewportRect.Width, ViewportRect.Height));
 
+  {$ifndef OpenGLES}
   if GLFeatures.EnableFixedFunction then
   begin
     { Set OpenGL state that may be changed carelessly, and has some
-      guaranteed value, for Render2d calls. }
-    {$ifndef OpenGLES} glLoadIdentity; {$endif}
+      guaranteed value, for TCastleUserInterface.Render calls. }
+    glLoadIdentity;
     {$warnings off}
-    CastleGLUtils.WindowPos := Vector2Integer(0, 0);
+    CastleInternalGLUtils.WindowPos := Vector2Integer(0, 0);
     {$warnings on}
   end;
+  {$endif}
 end;
 
 procedure TCastleContainer.EventRender;
@@ -1781,12 +1899,14 @@ begin
 
   { draw controls in "to" order, back to front }
   for I := 0 to Controls.Count - 1 do
-    Controls[I].RecursiveRender(Rect);
+    Controls[I].InternalRecursiveRender(Rect);
 
   if FTooltipParent <> nil then
   begin
     RenderControlPrepare(Rect);
+    {$warnings off} // using deprecated to keep it working, also to enable TCastleUserInterfaceFont to display tooltip
     FTooltipParent.TooltipRender(FTooltipPosition);
+    {$warnings on}
   end;
 
   RenderControlPrepare(Rect);
@@ -1814,7 +1934,7 @@ begin
     Control.GLContextOpen;
   Control.CheckResize;
   Control.BeforeRender;
-  Control.RecursiveRender(ViewportRect);
+  Control.InternalRecursiveRender(ViewportRect);
 
   { TODO: calling the methods below is not recursive,
     it will not unprepare the children correctly. }
@@ -1862,7 +1982,42 @@ end;
 
 procedure TCastleContainer.MouseLookUpdate;
 begin
-  // Nothing useful to do here
+  { Never "capture" the motion of the mouse when MouseLook.
+
+    Without this, using mouse look and then pressing some mouse button that it handled
+    (e.g. to shoot), makes the subsequent dragging not work
+    -- it is blocked for a short time before releasing left mouse button
+    and then it is blocked until you release right mouse button too
+    (because of "if (Capture <> nil) and (MousePressed = []) then" condition).
+
+    Testcases:
+
+    - examples/physics/physics_3d_shooter/
+
+      Mouse look is active when buttonRight is held.
+      buttonLeft does shoot.
+
+      So without this fix, shooting while mouse looking
+      (clicking buttonLeft while holding buttonRight)
+      stops mouse look, even though user still holds buttonRight.
+
+    - examples/fps_game/
+
+      As above, though mouse look can also be permanent (after F4).
+
+      It's a problem in any case (whether mouse look is permanent by F4,
+      or temporary by holding buttonRight): clicking with buttonLeft stops
+      mouse look from working.
+
+    - examples/third_person_navigation/
+
+      We have permanent mouse look by default.
+
+      As both buttonLeft (shoot) and buttonRight (toggle aim) perform some function,
+      they both stop mouse look from working.
+  }
+  FCaptureInput.Clear;
+  // this is like ReleaseCapture(...) for all possible arguments
 end;
 
 procedure TCastleContainer.MouseLookIgnoreNextMotion;
@@ -2015,6 +2170,16 @@ begin
   begin
     FUIScaling := Value;
     UpdateUIScale;
+  end;
+end;
+
+procedure TCastleContainer.SetDpi(const Value: Single);
+begin
+  if FDpi <> Value then
+  begin
+    FDpi := Value;
+    if UIScaling = usDpiScale then
+       UpdateUIScale;
   end;
 end;
 
@@ -2188,12 +2353,6 @@ begin
   Result := SaveScreenRgba(Rect);
 end;
 
-function TCastleContainer.Dpi: Single;
-begin
-  { Default implementation, if you cannot query real dpi value of the screen. }
-  Result := DefaultDpi;
-end;
-
 function TCastleContainer.Rect: TRectangle;
 begin
   Result := Rectangle(0, 0, Width, Height);
@@ -2255,7 +2414,7 @@ end;
 procedure TCastleContainer.LoadSettings(const SettingsUrl: String);
 begin
   if not ApplicationProperties.IsGLContextOpen then
-    raise Exception.Create('Rendering context not open when calling TUIContainer.LoadSettings. Call LoadSettings later, e.g. in Application.OnInitialize, TCastleWindow.OnOpen, TCastleControl.OnOpen');
+    raise Exception.Create('Rendering context not open when calling TCastleContainer.LoadSettings. Call LoadSettings later, e.g. in Application.OnInitialize, TCastleWindow.OnOpen, TCastleControl.OnOpen');
   SettingsLoad(Self, SettingsUrl);
 end;
 
@@ -2267,6 +2426,134 @@ end;
 procedure TCastleContainer.SetInspectorKey(const Value: TKey);
 begin
   FInputInspector.Key := Value;
+end;
+
+function TCastleContainer.GetView: TCastleView;
+begin
+  if (FViewStack = nil) or
+     (FViewStack.Count = 0) then
+    Result := nil
+  else
+    Result := FViewStack[0];
+end;
+
+function TCastleContainer.GetFrontView: TCastleView;
+begin
+  if (FViewStack = nil) or
+     (FViewStack.Count = 0) then
+    Result := nil
+  else
+    Result := FViewStack[FViewStack.Count - 1];
+end;
+
+procedure TCastleContainer.SetView(const Value: TCastleView);
+begin
+  { exit early if there's nothing to do }
+  if (ViewStackCount = 0) and (Value = nil) then
+    Exit;
+  if (ViewStackCount = 1) and (FViewStack[0] = Value) then
+    Exit;
+
+  if FDisableStackChange <> 0 then
+    ErrorStackChangeDisabled('Cannot change TCastleView.View from inside of TCastleView.Start/Resume/Pause/Stop');
+
+  { Remove and finish topmost view.
+    The loop is written to work even when some view Stop method
+    changes views. }
+  while ViewStackCount <> 0 do
+    PopView;
+  { deallocate empty FViewStack }
+  if Value = nil then
+    FreeAndNil(FViewStack);
+
+  PushView(Value);
+end;
+
+procedure TCastleContainer.PushView(const NewView: TCastleView);
+begin
+  if NewView <> nil then
+  begin
+    if FDisableStackChange <> 0 then
+      ErrorStackChangeDisabled('Cannot call TCastleContainer.Push from inside of TCastleView.Start/Resume/Pause/Stop');
+
+    Inc(FDisableStackChange);
+    try
+      { pause previous top-most view }
+      if (FViewStack <> nil) and
+         (FViewStack.Count <> 0) then
+        FViewStack.Last.Pause;
+
+      { create FViewStack on demand now }
+      if FViewStack = nil then
+        FViewStack := TCastleViewList.Create(false);
+      FViewStack.Add(NewView);
+      NewView.InternalStart(Self);
+      NewView.Resume;
+    finally
+      Dec(FDisableStackChange)
+    end;
+  end;
+end;
+
+procedure TCastleContainer.PopView;
+var
+  SavedFrontView: TCastleView;
+begin
+  if FDisableStackChange <> 0 then
+    ErrorStackChangeDisabled('Cannot call TCastleContainer.Pop from inside of TCastleView.Start/Resume/Pause/Stop');
+
+  Inc(FDisableStackChange);
+  try
+    SavedFrontView := FrontView;
+    SavedFrontView.Pause;
+    SavedFrontView.InternalStop;
+    if SavedFrontView = FrontView then
+      FViewStack.Delete(FViewStack.Count - 1)
+    else
+      WritelnWarning('TCastleView', 'Topmost view is no longer topmost after its Stop method. Do not change view stack from view Stop methods.');
+
+    if SavedFrontView.FFreeWhenStopped then
+      FreeAndNil(SavedFrontView);
+
+    { resume new top-most view }
+    if (FViewStack <> nil) and
+       (FViewStack.Count <> 0) then
+      FViewStack.Last.Resume;
+  finally
+    Dec(FDisableStackChange)
+  end;
+end;
+
+procedure TCastleContainer.PopView(const CheckFrontView: TCastleView);
+begin
+  if (FViewStack = nil) or (FViewStack.Count = 0) then
+  begin
+    WritelnWarning('TCastleView', 'Cannot pop UI view, that stack is empty');
+    Exit;
+  end;
+  if FViewStack.Last <> CheckFrontView then
+  begin
+    WritelnWarning('TCastleView', 'Cannot pop UI view, front (top-most) view is expected to be ' + CheckFrontView.ClassName + ', but is ' + FViewStack.Last.ClassName);
+    Exit;
+  end;
+
+  PopView;
+end;
+
+function TCastleContainer.ViewStackCount: Integer;
+begin
+  if FViewStack = nil then
+    Result := 0
+  else
+    Result := FViewStack.Count;
+end;
+
+function TCastleContainer.GetViewStack(const Index: Integer): TCastleView;
+begin
+  if FViewStack = nil then
+    raise EInternalError.CreateFmt('TCastleView.GetViewStack: view stack is empty, cannot get view index %d',
+      [Index]);
+  Result := FViewStack[Index];
 end;
 
 {$endif read_implementation}

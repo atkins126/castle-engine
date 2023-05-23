@@ -1,5 +1,5 @@
 {
-  Copyright 2014-2022 Michalis Kamburelis.
+  Copyright 2014-2023 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -19,7 +19,7 @@ unit ToolUtils;
 interface
 
 uses DOM,
-  CastleImages, CastleStringUtils;
+  CastleImages, CastleStringUtils, CastleUtils;
 
 { Copy file, making sure the destination directory exists
   (eventually creating it), and checking result. }
@@ -52,8 +52,8 @@ const
 
     Index: packages/fcl-image/src/fpinterpolation.inc
     ===================================================================
-    --- packages/fcl-image/src/fpinterpolation.inc	(wersja 40746)
-    +++ packages/fcl-image/src/fpinterpolation.inc	(kopia robocza)
+    --- packages/fcl-image/src/fpinterpolation.inc      (wersja 40746)
+    +++ packages/fcl-image/src/fpinterpolation.inc      (kopia robocza)
     @@ -223,7 +223,8 @@
                NewCol.blue:=Min(NewCol.blue+round(Col.blue*f),$ffff);
                NewCol.alpha:=Min(NewCol.alpha+round(Col.alpha*f),$ffff);
@@ -100,13 +100,30 @@ procedure DoMakeExecutable(const PathAndName: String);
   This is only used when --gui-errors was used. }
 procedure ErrorBox(const Message: String);
 
+const
+  SCannotFindCgePath = 'Cannot find Castle Game Engine path.' + NL +
+    'Solutions:' + NL +
+    '1. Run from CGE editor (where you can configure CGE path in "Preferences",' + NL +
+    '2. Or place the engine tools (exe) inside the bin/ subdirectory of the engine,' + NL +
+    '3. Or set the environment variable $CASTLE_ENGINE_PATH.';
+
+function CachePath: String;
+
+{ Generate GUID using Seed to determine it, instead of using Random.
+  This is useful when you want to generate GUID that is stable between runs
+  (for example, when you want to have regenerate_auto_files_in_all_examples.sh
+  have stable output).
+
+  This is not a cryptographically secure hash, it's just a simple hash
+  to make GUID stable. }
+function CreateGUIDFromHash(const Seed: String): TGuid;
+
 implementation
 
 uses {$ifdef UNIX} BaseUnix, {$endif}
   {$ifdef MSWINDOWS} Windows, {$endif}
   Classes, Process, SysUtils,
-  CastleFilesUtils, CastleUtils, CastleURIUtils, CastleLog, CastleXMLUtils,
-  CastleFindFiles,
+  CastleFilesUtils, CastleURIUtils, CastleLog, CastleXMLUtils, CastleFindFiles,
   ToolCommonUtils;
 
 procedure SmartCopyFile(const Source, Dest: string);
@@ -126,15 +143,22 @@ begin
 end;
 
 var
-  FOutputPath: string;
+  FOutputPath: String;
+  FOutputPathForWorkingDirectory: String;
 
-function TempOutputPath(const WorkingDirectory: string; const CreateIfNecessary: boolean): string;
+function TempOutputPath(const WorkingDirectory: String; const CreateIfNecessary: Boolean): String;
 const
   OutputNoteContents = {$I ../embedded_templates/template-castle-engine-output-warning.txt.inc};
 var
-  OutputNote: string;
+  OutputNote: String;
 begin
-  if FOutputPath = '' then
+  if (FOutputPath = '') or
+     { Do not reuse cached FOutputPath for different WorkingDirectory,
+       otherwise doing DoCompile for different projects in same run would accidentally
+       reuse output.
+       Testcase: "castle-engine cache", each mode (release valgrind debug)
+       must build new files. }
+     (FOutputPathForWorkingDirectory <> WorkingDirectory) then
   begin
     if OutputPathBase = '' then
       FOutputPath := InclPathDelim(WorkingDirectory)
@@ -150,6 +174,8 @@ begin
       if not RegularFileExists(OutputNote) then
         StringToFile(OutputNote, OutputNoteContents);
     end;
+
+    FOutputPathForWorkingDirectory := WorkingDirectory;
   end;
 
   Result := FOutputPath;
@@ -258,6 +284,69 @@ begin
   {$else}
   RunCommandSimple('zenity', ['--error', '--no-markup', '--text=' + Message]);
   {$endif}
+end;
+
+function CachePath: String;
+begin
+  Result := InclPathDelim(GetAppConfigDir(false)) + 'cache' + PathDelim;
+end;
+
+{ Hash of arbitrary data. Always 0 for DataSize = 0. }
+function HashData(const Data; const DataSize: SizeInt): UInt32;
+var
+  DataBytes: TByteArray absolute Data;
+  I: SizeInt;
+begin
+  Result := 0;
+  for I := 0 to DataSize - 1 do
+  begin
+    Result := Result xor DataBytes[I];
+    {$I norqcheckbegin.inc}
+    Result := Result * 16777619;
+    {$I norqcheckend.inc}
+  end;
+end;
+
+{ Hash of a String. Always 0 for empty string. }
+function HashString(const S: String): UInt32;
+begin
+  if S = '' then
+    Result := 0
+  else
+    Result := HashData(S[1], Length(S) * SizeOf(Char));
+end;
+
+function CreateGUIDFromHash(const Seed: String): TGuid;
+
+(*
+var
+  { FPC: https://www.freepascal.org/docs-html/rtl/system/randseed.html
+    Delphi: https://docwiki.embarcadero.com/Libraries/Sydney/en/System.RandSeed }
+  SavedRandSeed: {$ifdef FPC} Cardinal {$else} Integer {$endif}};
+begin
+  SavedRandSeed := RandSeed;
+  try
+    RandSeed := HashString(Seed);
+    Result := CreateGUID;
+  finally
+    RandSeed := SavedRandSeed;
+  end;
+*)
+
+{ Use approach that doesn't depend on Random algorithm, which may differ between FPC, Delphi
+  and even their particular versions. }
+
+var
+  I: Integer;
+begin
+  Result.D1 := HashString(Seed);
+  { Below we assign UInt32 values (HashString) to smaller types, just ignore the overflows. }
+  {$I norqcheckbegin.inc}
+  Result.D2 := HashString(Seed + 'D2');
+  Result.D3 := HashString(Seed + 'D3');
+  for I := Low(Result.D4) to High(Result.D4) do
+    Result.D4[I] := HashString(Seed + 'D4' + IntToStr(I));
+  {$I norqcheckend.inc}
 end;
 
 end.

@@ -1,5 +1,6 @@
+{%MainUnit castlewindow.pas}
 {
-  Copyright 2013-2022 Michalis Kamburelis.
+  Copyright 2013-2023 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -24,7 +25,7 @@
     but doesn't completely fix the problem. Other CastleWindow backends
     have smooth mouse look.
 
-  - We never call Fps._Sleeping, so Fps.WasSleeping will be always false.
+  - We never call Fps.InternalSleeping, so Fps.WasSleeping will be always false.
     This may result in confusing Fps.ToString in case AutoRedisplay was false.
 
   Bugs on GTK2, not on Carbon:
@@ -448,7 +449,7 @@ begin
   Form.Width := Width;
   Form.Height := Height;
   Form.Caption := GetWholeCaption; // SetCaption may also change it later
-  Form.Cursor := CursorCastleToLCL[InternalCursor]; // SetCursor may also change it later
+  Form.Cursor := CursorCastleToLCL(InternalCursor); // SetCursor may also change it later
 
   UpdateFullScreenForm;
 
@@ -538,7 +539,7 @@ begin
 
   GetInitialCursorPos;
 
-  FDpi := Screen.PixelsPerInch;
+  Container.Dpi := Screen.PixelsPerInch;
 end;
 
 const
@@ -616,7 +617,7 @@ begin
     if not Closed then
       { Do not use Form.Cursor for this, e.g. hiding the cursor would not work
         then on Carbon. }
-      OpenGLControl.Cursor := CursorCastleToLCL[Value];
+      OpenGLControl.Cursor := CursorCastleToLCL(Value);
   end;
 end;
 

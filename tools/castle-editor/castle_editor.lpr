@@ -1,5 +1,5 @@
 {
-  Copyright 2018-2022 Michalis Kamburelis.
+  Copyright 2018-2023 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -41,11 +41,60 @@ uses
   //castle_editor_automatic_package,
   Forms, anchordockpkg, FormChooseProject, ProjectUtils, FormNewProject,
   EditorUtils, FormProject, FrameDesign, FormAbout, FrameViewFile,
-  FormPreferences, DesignVisualizeTransform, FormSpriteSheetEditor, DataModuleIcons,
-  FormImportAtlas, FormImportStarling, FormNewUnit, EditorCodeTools,
-  CastleShellCtrls, FormSystemInformation, CastleComponentEditorDesigner;
+  FormPreferences, DesignVisualizeTransform, FormSpriteSheetEditor,
+  DataModuleIcons, FormImportAtlas, FormImportStarling, FormNewUnit,
+  EditorCodeTools, CastleShellCtrls, FormSystemInformation,
+  CastleComponentEditorDesigner, DesignCameraPreview, DesignObjectInspector,
+  DesignUndoSystem, FormRestartCustomEditor;
+
+{ Forces using a dedicated (faster) GPU on laptops with multiple GPUs.
+  See https://castle-engine.io/dedicated_gpu }
+{$if (not defined(CASTLE_NO_FORCE_DEDICATED_GPU)) and (defined(cpu386) or defined(cpux64) or defined(cpuamd64)) and (defined(MSWINDOWS) or defined(Linux))}
+    {$ifdef fpc}
+     {$asmmode intel}
+    {$endif}
+
+    procedure NvOptimusEnablement; {$ifdef fpc}assembler; nostackframe;{$endif}
+    asm
+    {$ifdef cpu64}
+    {$ifndef fpc}
+     .NOFRAME
+    {$endif}
+    {$endif}
+     dd 1
+    end;
+
+    procedure AmdPowerXpressRequestHighPerformance; {$ifdef fpc}assembler; nostackframe;{$endif}
+    asm
+    {$ifdef cpu64}
+    {$ifndef fpc}
+     .NOFRAME
+    {$endif}
+    {$endif}
+     dd 1
+    end;
+
+    exports
+      NvOptimusEnablement,
+      AmdPowerXpressRequestHighPerformance;
+{$ifend}
 
 {$R *.res}
+
+{ Do not auto-create below forms that use TCastleControl, and would initialize OpenGL
+  right when the CGE editor opens.
+
+  Reason: In case someone has broken OpenGL library installation
+  we don't want to have CGE editor just crash at start, it's better if it will crash
+  later -- allowing us to recognize this case (e.g. because it crashes when you open any
+  design or "System Information").
+
+  If there's a single variable to hold single form instance, you can initialize it on-demand, like
+
+    if SystemInformationForm = nil then
+      SystemInformationForm := TSystemInformationForm.Create(Application);
+    SystemInformationForm.Show;
+}
 
 begin
   RequireDerivedFormResource := True;
@@ -59,6 +108,6 @@ begin
   Application.CreateForm(TImportAtlasForm, ImportAtlasForm);
   Application.CreateForm(TImportStarlingForm, ImportStarlingForm);
   Application.CreateForm(TNewUnitForm, NewUnitForm);
-  Application.CreateForm(TSystemInformationForm, SystemInformationForm);
+  Application.CreateForm(TRestartCustomEditorForm, RestartCustomEditorForm);
   Application.Run;
 end.

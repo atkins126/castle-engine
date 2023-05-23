@@ -1,5 +1,5 @@
 {
-  Copyright 2003-2022 Michalis Kamburelis.
+  Copyright 2003-2023 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -27,8 +27,7 @@
   or wait for 10 seconds displaying some animation, etc.
 
   This unit is internal, and in time may be removed.
-  For users, we recommend using CastleUIState as a way to implement user-interface
-  states. }
+  We recommend using TCastleView(s) instances to organize your user-interface. }
 unit CastleInternalWindowModes;
 
 {$I castleconf.inc}
@@ -253,6 +252,7 @@ begin
   inherited Create(nil);
   Window := AWindow;
 
+  {$warnings off} // keep deprecated OnXxx working
   OldOpenObject := Window.OnOpenObject;
   OldCloseObject := Window.OnCloseObject;
   { Note that we do not touch OnOpen and OnClose. Let them happen.
@@ -266,10 +266,9 @@ begin
   OldResize := Window.OnResize;
   OldUpdate := Window.OnUpdate;
   {$ifdef FPC}
-  {$warnings off} // keep deprecated working
   OldTimer := Window.OnTimer;
-  {$warnings on}
   {$endif}
+  {$warnings on}
   OldMenuClick := Window.OnMenuClick;
   oldCaption := Window.Caption;
   oldUserdata := Window.Userdata;
@@ -288,6 +287,7 @@ end;
 
 destructor TGLMode.TWindowState.Destroy;
 begin
+  {$warnings off} // keep deprecated OnXxx working
   Window.OnOpenObject := OldOpenObject;
   Window.OnCloseObject := OldCloseObject;
   Window.OnMotion := OldMotion;
@@ -299,10 +299,9 @@ begin
   Window.OnResize := OldResize;
   Window.OnUpdate := OldUpdate;
   {$ifdef FPC}
-  {$warnings off} // keep deprecated working
   Window.OnTimer := OldTimer;
-  {$warnings on}
   {$endif}
+  {$warnings on}
   Window.OnMenuClick := OldMenuClick;
   Window.Caption := oldCaption;
   Window.Userdata := oldUserdata;
@@ -363,6 +362,7 @@ end;
 procedure TGLMode.TWindowState.SetStandardState(
   NewRender, NewResize, NewCloseQuery: TContainerEvent);
 begin
+  {$warnings off} // keep deprecated OnXxx working
   Window.OnOpenObject := {$ifdef FPC}@{$endif}WindowOpen;
   Window.OnCloseObject := {$ifdef FPC}@{$endif}WindowClose;
   Window.OnMotion := nil;
@@ -373,15 +373,14 @@ begin
   Window.OnCloseQuery := nil;
   Window.OnUpdate := nil;
   {$ifdef FPC}
-  {$warnings off} // keep deprecated working
   Window.OnTimer := nil;
-  {$warnings on}
   {$endif}
   Window.OnResize := nil;
-  Window.OnMenuClick := nil;
   Window.OnRender := NewRender;
   Window.OnResize := NewResize;
   Window.OnCloseQuery := NewCloseQuery;
+  {$warnings on}
+  Window.OnMenuClick := nil;
   {Window.Caption := leave current value}
   Window.Userdata := nil;
   Window.AutoRedisplay := false;
@@ -506,7 +505,9 @@ constructor TGLModeFrozenScreen.Create(AWindow: TCastleWindow);
     BackgroundRect := TCastleRectangleControl.Create(BackgroundControls);
     BackgroundRect.Color := BackgroundColor;
     BackgroundRect.FullSize := true;
+    {$warnings off} // using deprecated, but this whole TGLMode is hacky, we should rather use TCastleView and TCastleView.InterceptInput
     BackgroundRect.InterceptInput := true;
+    {$warnings on}
     BackgroundControls.InsertFront(BackgroundRect);
   end;
 

@@ -1,5 +1,5 @@
 {
-  Copyright 2018-2022 Michalis Kamburelis.
+  Copyright 2018-2023 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -49,11 +49,24 @@ function ComponentLoad(const Url: String; const Owner: TComponent): TComponent;
 function ComponentToString(const C: TComponent): String;
 function StringToComponent(const Contents: String; const Owner: TComponent): TComponent;
 
-{ @exclude
-  Like StringToComponent but takes additional PreserveDataAcrossUndo
-  that allows viewports to preserve design-time camera/navigation across CGE editor undo. }
+type
+  { Additional loading configuration for InternalStringToComponent.
+    @exclude }
+  TInternalComponentLoadInfo = class
+    { Allows viewports to preserve design-time camera/navigation across CGE editor undo. }
+    PreserveDataAcrossUndo: TComponent;
+    { If ChangeClassName is non-empty, at loading we change class of given component to this. }
+    ChangeClassName: String;
+    ChangeClassClass: TComponentClass;
+  end;
+
+{ Like StringToComponent but takes additional TInternalComponentLoadInfo
+  that adds some possibilities. LoadInfo may be @nil (making this equivalent
+  to just StringToComponent).
+  @exclude }
 function InternalStringToComponent(const Contents: String;
-  const Owner, PreserveDataAcrossUndo: TComponent): TComponent;
+  const Owner: TComponent;
+  const LoadInfo: TInternalComponentLoadInfo): TComponent;
 
 type
   { Describes a component registered using @link(RegisterSerializableComponent),
@@ -63,7 +76,7 @@ type
     { Class of the component. Never leave this @nil. }
     ComponentClass: TComponentClass;
     { Nice caption to show user in the editor. }
-    Caption: String;
+    Caption: array of String;
     { Called by the editor always after creating this component. }
     OnCreate: TNotifyEvent;
     { Should correspond to whether class is declared as "deprecated" in Pascal
@@ -78,7 +91,9 @@ type
   the TRegisteredComponent instance becomes internally owned in this unit
   (do not free it yourself). }
 procedure RegisterSerializableComponent(const ComponentClass: TComponentClass;
-  const Caption: String); overload;
+  const Caption: array of String); overload;
+procedure RegisterSerializableComponent(const ComponentClass: TComponentClass;
+  const CaptionOnePart: String); overload;
 procedure RegisterSerializableComponent(const C: TRegisteredComponent); overload;
 
 { Read-only list of currently registered
@@ -104,7 +119,8 @@ type
     FUrl, FTranslationGroupName: String;
     JsonObject: TJsonObject;
   private
-    function InternalComponentLoad(const Owner, PreserveDataAcrossUndo: TComponent): TComponent;
+    function InternalComponentLoad(const Owner: TComponent;
+      const LoadInfo: TInternalComponentLoadInfo): TComponent;
   public
     constructor Create(const AUrl: String);
     constructor CreateFromString(const Contents: String);
@@ -182,18 +198,65 @@ begin
 end;
 
 procedure RegisterSerializableComponent(const ComponentClass: TComponentClass;
-  const Caption: String);
+  const Caption: array of String);
+var
+  R: TRegisteredComponent;
+  I: Integer;
+begin
+  R := TRegisteredComponent.Create;
+  R.ComponentClass := ComponentClass;
+  SetLength(R.Caption, High(Caption) + 1);
+  for I := 0 to High(Caption) do
+    R.Caption[I] := Caption[I];
+  RegisteredComponents.Add(R);
+end;
+
+procedure RegisterSerializableComponent(const ComponentClass: TComponentClass;
+  const CaptionOnePart: String);
 var
   R: TRegisteredComponent;
 begin
   R := TRegisteredComponent.Create;
   R.ComponentClass := ComponentClass;
-  R.Caption := Caption;
+  R.Caption := [CaptionOnePart];
   RegisteredComponents.Add(R);
 end;
 
 procedure RegisterSerializableComponent(const C: TRegisteredComponent);
+
+  function InsertSpacesBeforeUpperLetters(const S: String): String;
+  var
+    StrBuild: TStringBuilder;
+    I: Integer;
+  begin
+    StrBuild := TStringBuilder.Create;
+    try
+      for I := 1 to Length(S) do
+      begin
+        if (I > 1) and (S[I] in ['A'..'Z']) then
+          StrBuild.Append(' ');
+        StrBuild.Append(S[I]);
+      end;
+      Result := StrBuild.ToString;
+    finally FreeAndNil(StrBuild) end;
+  end;
+
+var
+  GuessedCaption: String;
 begin
+  if C.ComponentClass = nil then
+    raise Exception.Create('RegisterSerializableComponent: ComponentClass not assigned');
+
+  if (Length(C.Caption) = 0) or (C.Caption[0] = '') then
+  begin
+    GuessedCaption := InsertSpacesBeforeUpperLetters(
+      PrefixRemove('Castle', PrefixRemove('T', C.ComponentClass.ClassName, true), true));
+    C.Caption := [GuessedCaption];
+    WritelnWarning('RegisterSerializableComponent: component Caption at registration cannot be empty, setting a placeholder "%s"', [
+      GuessedCaption
+    ]);
+  end;
+
   RegisteredComponents.Add(C);
 end;
 
@@ -262,7 +325,7 @@ type
     procedure AfterReadObject(Sender: TObject; AObject: TObject; Json: TJsonObject);
     procedure RestoreProperty(Sender: TObject; AObject: TObject; Info: PPropInfo; AValue: TJsonData; var Handled: Boolean);
   private
-    PreserveDataAcrossUndo: TComponent;
+    LoadInfo: TInternalComponentLoadInfo;
     FOwner: TComponent;
     (*Resolve hanging references, when JSON referred to some component name
       before this component was actually defined.
@@ -295,7 +358,8 @@ type
 
 { Read and create suitable component class from JSON. }
 function CreateComponentFromJson(const JsonObject: TJsonObject;
-  const Owner: TComponent): TComponent;
+  const Owner: TComponent;
+  const LoadInfo: TInternalComponentLoadInfo): TComponent;
 var
   ResultClassName: String;
   ResultClass: TComponentClass;
@@ -303,26 +367,35 @@ begin
   if Owner = nil then
     raise Exception.Create('You must provide non-nil Owner when deserializing a component. Without an Owner, it is not possible to free the component hierarchy easily, and you will most likely have memory leaks.');
 
-  if JsonObject.Find('$$ClassName') <> nil then
-    ResultClassName := JsonObject.Strings['$$ClassName']
-  else
-  if JsonObject.Find('$ClassName') <> nil then
-    ResultClassName := JsonObject.Strings['$ClassName'] // handle older format
-  else
-    ResultClassName := JsonObject.Strings['_ClassName']; // handle older format
+  if (LoadInfo <> nil) and
+     (LoadInfo.ChangeClassName <> '') and // early exit in the usual case
+     (LoadInfo.ChangeClassName = JsonObject.Strings['Name']) then
+  begin
+    ResultClass := LoadInfo.ChangeClassClass;
+  end else
+  begin
+    if JsonObject.Find('$$ClassName') <> nil then
+      ResultClassName := JsonObject.Strings['$$ClassName']
+    else
+    if JsonObject.Find('$ClassName') <> nil then
+      ResultClassName := JsonObject.Strings['$ClassName'] // handle older format
+    else
+      ResultClassName := JsonObject.Strings['_ClassName']; // handle older format
 
-  { Initially we did here
-      JsonObject.Delete('_ClassName');
-    to not confuse TJsonDeStreamer with extra _ClassName property.
-    But later: it is better to leave JSON structure unmodified
-    (allows to read it multiple times, if needed). }
+    { Initially we did here
+        JsonObject.Delete('_ClassName');
+      to not confuse TJsonDeStreamer with extra _ClassName property.
+      But later: it is better to leave JSON structure unmodified
+      (allows to read it multiple times, if needed). }
 
-  ResultClass := FindComponentClass(ResultClassName);
+    ResultClass := FindComponentClass(ResultClassName);
+  end;
+
   if ResultClass = nil then
     raise EInvalidComponentFile.CreateFmt('Component JSON file references an unrecognized class "%s".' + NL + NL +
       Iff(CastleDesignMode,
       'As you see this in the editor: the most likely cause is that this project uses custom components, and you did not make a custom editor build. Use the menu item "Project -> Restart Editor (With Custom Components)" to build and run correct editor.',
-      'Add the unit that registers "%s" to the "uses" clause of any unit in the application. E.g. add "CastleTiledMap" to some uses clause, if you use "TCastleTiledMapControl" in the design.'),
+      'Add the unit that registers "%s" to the "uses" clause of any unit in the application. E.g. add "CastleTiledMap" to some uses clause, if you use "TCastleTiledMap" in the design.'),
       [ResultClassName, ResultClassName]);
   Result := ResultClass.Create(Owner);
 end;
@@ -401,7 +474,7 @@ begin
       JsonChild := JsonChildren.Objects[I];
       if JsonChild = nil then
         raise EInvalidComponentFile.Create('$' + Key + ' must be an array of JSON objects');
-      Child := CreateComponentFromJson(JsonChild, Reader.Owner);
+      Child := CreateComponentFromJson(JsonChild, Reader.Owner, Reader.LoadInfo);
       Reader.DeStreamer.JsonToObject(JsonChild, Child);
       ListAdd(Child);
     end;
@@ -439,7 +512,10 @@ procedure TCastleJsonReader.AfterReadObject(
   begin
     SerializationProcess.CurrentlyReading := Json;
     SerializationProcess.Reader := Self;
-    SerializationProcess.InternalPreserveDataAcrossUndo := PreserveDataAcrossUndo;
+    if LoadInfo <> nil then
+      SerializationProcess.InternalPreserveDataAcrossUndo := LoadInfo.PreserveDataAcrossUndo
+    else
+      SerializationProcess.InternalPreserveDataAcrossUndo := nil;
     C.CustomSerialization(SerializationProcess);
   end;
 
@@ -657,10 +733,32 @@ begin
     PropertyValueAsObject := Owner.FindComponent(R.PropertyValue);
     if PropertyValueAsObject = nil then
     begin
-      WritelnWarning('Cannot resolve component name "%s", it will be a new empty instance', [
+      { In case we cannot resolve the component name, it is better to set
+        the property to nil than to leave the empty (unnamed) placeholder
+        instance created by FpJson.
+        That is because having an unnamed component would cause further troubles:
+        - If you save it again, we will save a component with name='' and a reference
+          to it using empty name.
+        - Opening it, we could not resolve the empty name (because empty name never
+          matches in FindComponent) and we would create a new empty component...
+
+        This is actually possible:
+        - Save with "Save Selected" a subset of hierarchy that doesn't include
+          some referenced component.
+          For example, make TCastleViewport.Camera reference a TCastleCamera instance
+          defined *outside of this TCastleViewport* (on another viewport) called
+          'CameraOutside'.
+        - Saving it with "Save Selected" for now just makes a design with broken link.
+          The Camera="CameraOutside" reference in viewport cannot be resolved.
+          If we convert it to nil on load, that's just a warning and we can continue OK.
+        - If we leave the TCastleCamera placeholder instance, next save of this will save
+          to JSON TCastleCamera with Name='', and Camera="" reference in viewport.
+        - On load, we will fail to resolve Camera="".
+          Saving and loading will create more and more unnamed TCastleCamera instances...
+      }
+      WritelnWarning('Cannot resolve component name "%s", it will be set to nil', [
         R.PropertyValue
       ]);
-      Continue;
     end;
 
     // free previous property value, in the safest way possible
@@ -752,17 +850,18 @@ begin
   Result := InternalComponentLoad(Owner, nil);
 end;
 
-function TSerializedComponent.InternalComponentLoad(const Owner, PreserveDataAcrossUndo: TComponent): TComponent;
+function TSerializedComponent.InternalComponentLoad(const Owner: TComponent;
+  const LoadInfo: TInternalComponentLoadInfo): TComponent;
 var
   Reader: TCastleJsonReader;
 begin
   Reader := TCastleJsonReader.Create;
   try
     Reader.FOwner := Owner;
-    Reader.PreserveDataAcrossUndo := PreserveDataAcrossUndo;
+    Reader.LoadInfo := LoadInfo;
 
     { create Result with appropriate class }
-    Result := CreateComponentFromJson(JsonObject, Owner);
+    Result := CreateComponentFromJson(JsonObject, Owner, LoadInfo);
 
     { read Result contents from JSON }
     Reader.DeStreamer.JsonToObject(JsonObject, Result);
@@ -782,13 +881,14 @@ begin
 end;
 
 function InternalStringToComponent(const Contents: String;
-  const Owner, PreserveDataAcrossUndo: TComponent): TComponent;
+  const Owner: TComponent;
+  const LoadInfo: TInternalComponentLoadInfo): TComponent;
 var
   SerializedComponent: TSerializedComponent;
 begin
   SerializedComponent := TSerializedComponent.CreateFromString(Contents);
   try
-    Result := SerializedComponent.InternalComponentLoad(Owner, PreserveDataAcrossUndo);
+    Result := SerializedComponent.InternalComponentLoad(Owner, LoadInfo);
   finally FreeAndNil(SerializedComponent) end;
 end;
 
@@ -1014,6 +1114,29 @@ end;
 
 procedure TCastleJsonWriter.StreamProperty(Sender: TObject;
   AObject: TObject; Info: PPropInfo; var Res: TJsonData);
+
+  { Serialize to JSON a set of values from 0 to Highest. }
+  function SerializeSet(
+    { Note that GetOrdProp result type for each compiler is different:
+      - Int64 https://www.freepascal.org/docs-html/rtl/typinfo/getordprop.html
+      - NativeInt https://docwiki.embarcadero.com/Libraries/Sydney/en/System.TypInfo.GetOrdProp
+      It seems we can reliably handle at most 32 bits.
+      Actually TCastleTiledMap.TLayerIndex limits itself to 31 bits for now,
+      to avoid worrying about whether negative values are passed through the API OK.
+    }
+    const ValueOfSet: UInt32;
+    const Highest: Integer): TJsonArray;
+  type
+    TIntegerSet = set of 0..31;
+  var
+    I: Integer;
+  begin
+    Result := TJSONArray.Create;
+    for I := 0 to Highest do
+      if I in TIntegerSet(ValueOfSet) then
+        TJSONArray(Result).Add(I);
+  end;
+
 begin
   if Info^.Name = 'Name' then
   begin
@@ -1057,6 +1180,31 @@ begin
     //WritelnLog('Not serializing ' + AObject.ClassName + '.' + Info^.Name + ' because it has default value');
     FreeAndNil(Res);
     Exit;
+  end;
+
+  { Custom support for sets of integers (T3DCoords, TLayers) serialization.
+
+    By default FpJsonRtti has a bug in this case:
+    It tries to do "GetEnumName" on integers 0..max, and serializes weird thing
+
+      "LockRotation" : [
+        "\u0000",
+        ""
+      ]
+
+    .. that it cannot deserialize back.
+    The code below does serialization as if "jsoSetEnumeratedAsInteger in Options"
+    but only for this type. We don't want to change serialization of sets of enums.
+  }
+  if (Info^.PropType^.Kind = tkSet) and (Info^.PropType^.Name = 'T3DCoords')  then
+  begin
+    FreeAndNil(Res);
+    Res := SerializeSet(GetOrdProp(AObject, Info), 2 { manually synchronized with T3DCoord });
+  end;
+  if (Info^.PropType^.Kind = tkSet) and (Info^.PropType^.Name = 'TLayers')  then
+  begin
+    FreeAndNil(Res);
+    Res := SerializeSet(GetOrdProp(AObject, Info), 30 { manually synchronized with TCastleTiledMap.TLayerIndex });
   end;
 end;
 

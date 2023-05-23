@@ -1,5 +1,5 @@
 {
-  Copyright 2006-2022 Michalis Kamburelis.
+  Copyright 2006-2023 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -827,7 +827,7 @@ const
 
     Box := Shape.BoundingBox;
     Position := Box.Center;
-    Position.InternalData[Items.GravityCoordinate] := Box.Data[0].InternalData[Items.GravityCoordinate];
+    Position.Data[Items.GravityCoordinate] := Box.Data[0].Data[Items.GravityCoordinate];
 
     Direction := Info.PlaceholderReferenceDirection;
     Direction := Shape.State.Transformation.Transform.MultDirection(Direction);
@@ -985,10 +985,10 @@ var
       {$warnings off} // using deprecated in deprecated unit
       NewMoveLimit := Items.MainScene.BoundingBox;
       {$warnings on}
-      NewMoveLimit.Data[1].InternalData[Items.GravityCoordinate] :=
-      NewMoveLimit.Data[1].InternalData[Items.GravityCoordinate] +
-        4 * (NewMoveLimit.Data[1].InternalData[Items.GravityCoordinate] -
-             NewMoveLimit.Data[0].InternalData[Items.GravityCoordinate]);
+      NewMoveLimit.Data[1].Data[Items.GravityCoordinate] :=
+      NewMoveLimit.Data[1].Data[Items.GravityCoordinate] +
+        4 * (NewMoveLimit.Data[1].Data[Items.GravityCoordinate] -
+             NewMoveLimit.Data[0].Data[Items.GravityCoordinate]);
       Items.MoveLimit := NewMoveLimit;
     end;
 
@@ -1137,22 +1137,18 @@ begin
     Progress.Fini;
   end;
 
-  { Loading octree have their own Progress, so we load them outside our
-    progress. }
   {$warnings off} // using deprecated in deprecated unit
-  Items.MainScene.TriangleOctreeProgressTitle := 'Loading level (triangle octree)';
-  Items.MainScene.ShapeOctreeProgressTitle := 'Loading level (Shape octree)';
-  Items.MainScene.Spatial := [ssRendering, ssDynamicCollisions];
-  Items.MainScene.PrepareResources([prSpatial], false, Viewport.PrepareParams);
+  Items.MainScene.PreciseCollisions := true;
+  Items.MainScene.PrepareResources([prSpatial], Viewport.PrepareParams);
   {$warnings on}
 
   if (Player <> nil) then
     Player.LevelChanged;
 
   SoundEngine.LoopingChannel[0].Sound := Info.MusicSound;
+  {$warnings off} // using deprecated in deprecated unit
   SoundEngine.PrepareResources;
 
-  {$warnings off} // using deprecated in deprecated unit
   Items.MainScene.ProcessEvents := true;
 
   Dec(Items.MainScene.InternalDirty);
@@ -1510,10 +1506,10 @@ begin
   if (GLFeatures <> nil) and GLFeatures.ShadowVolumesPossible then
     Include(Options, prShadowVolume);
 
-  Result.PrepareResources(Options, false, FLevel.PrepareParams);
+  Result.PrepareResources(Options, FLevel.PrepareParams);
 
   if PrepareForCollisions then
-    Result.Spatial := [ssDynamicCollisions];
+    Result.PreciseCollisions := true;
 
   Result.FreeResources([frTextureDataInNodes]);
 
@@ -1606,7 +1602,7 @@ begin
     raise Exception.CreateFmt('Root node of level.xml file must be <level>, but is "%s", in "%s"',
       [Element.TagName, DocumentBaseURL]);
 
-  { Required atttributes }
+  { Required attributes }
 
   if not Element.AttributeString('name', FName) then
     MissingRequiredAttribute('name');
@@ -1660,10 +1656,12 @@ begin
   LevelResources.LoadResources(Element);
   AddAlwaysPreparedResources;
 
+  {$warnings off} // using deprecated in deprecated unit
   if Element.AttributeString('music_sound', SoundName) then
     MusicSound := SoundEngine.SoundFromName(SoundName)
   else
     MusicSound := nil;
+  {$warnings on}
 end;
 
 { TLevelInfoList ------------------------------------------------------- }
@@ -1683,7 +1681,7 @@ begin
   raise Exception.Create(S);
 end;
 
-function IsSmallerByNumber({$ifdef FPC}constref{$else}const{$endif} A, B: TLevelInfo): Integer;
+function IsSmallerByNumber({$ifdef GENERICS_CONSTREF}constref{$else}const{$endif} A, B: TLevelInfo): Integer;
 begin
   Result := A.Number - B.Number;
 end;

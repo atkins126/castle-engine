@@ -1,5 +1,5 @@
 {
-  Copyright 2003-2022 Michalis Kamburelis.
+  Copyright 2003-2023 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -90,7 +90,7 @@ type
 
     Note that you don't really @italic(need) to use any TCastleNavigation to manipulate
     the camera. You can just access @link(TCastleViewport.Camera) from anywhere
-    (like TUIState code) and move, rotate it as you wish.
+    (like TCastleView code) and move, rotate it as you wish.
     TCastleNavigation is just a comfortable way to encapsulate
     some navigation methods, but it's not the only way to manipulate the camera.
 
@@ -109,6 +109,9 @@ type
     FOnFall: TFallNotifyFunc;
     FWarningInvalidParentDone: Boolean;
     FCheckCollisions: Boolean;
+    FZoomEnabled: Boolean;
+    FInput_ZoomIn: TInputShortcut;
+    FInput_ZoomOut: TInputShortcut;
 
     function GetIgnoreAllInputs: boolean;
     procedure SetIgnoreAllInputs(const Value: boolean);
@@ -120,6 +123,8 @@ type
       (to support multitouch). }
     MouseDraggingStarted: Integer;
     MouseDraggingStart: TVector2;
+
+    function GoodModelBox: TBox3D;
 
     { Viewport we should manipulate.
       This is @nil, or TCastleViewport instance, but it cannot be declared as
@@ -137,14 +142,14 @@ type
     { Can we use mouse dragging. Checks @link(UsingInput) and so @link(Valid) already. }
     function ReallyEnableMouseDragging: boolean; virtual;
 
-    { Check collisions to determine how high above ground is given point.
+    { Check collisions to determine how high above ground is given point (in world coordinates).
       Checks collisions through parent TCastleViewport, if CheckCollisions. }
     procedure Height(const APosition: TVector3;
       out AIsAbove: Boolean;
       out AnAboveHeight: Single; out AnAboveGround: PTriangle);
 
     { Check collisions to determine can the object move.
-      Object wants to move from OldPos to ProposedNewPos.
+      Object wants to move from OldPos to ProposedNewPos (in world coordinates).
 
       Returns @false if no move is allowed.
       Otherwise returns @true and sets NewPos to the position
@@ -171,7 +176,40 @@ type
       checks collisions through parent TCastleViewport, if CheckCollisions. }
     function MoveAllowed(
       const OldPos: TVector3; ProposedNewPos: TVector3; out NewPos: TVector3;
-      const Radius: Single; const BecauseOfGravity: Boolean): Boolean;
+      const BecauseOfGravity, CheckClimbHeight: Boolean): Boolean; virtual;
+
+    { Like Move, but you pass here final ProposedNewPos.
+
+      LocalProposedNewPos is given in TCastleCamera parent coordinates,
+      so it works naturally in the same space as TCastleCamera.Translation, Direction, Up.
+      You can think "I want to move to Translation + MoveVector". }
+    function MoveTo(const LocalProposedNewPos: TVector3;
+      const BecauseOfGravity, CheckClimbHeight: boolean): boolean;
+
+    { Try to move from current Translation to Translation + MoveVector.
+      Checks MoveAllowed, also (if CheckClimbHeight is @true)
+      checks the ClimbHeight limit.
+
+      MoveVector is given in TCastleCamera parent coordinates,
+      so it works naturally in the same space as TCastleCamera.Translation, Direction, Up.
+      You can think "I want to move TCastleCamera to Translation + MoveVector".
+
+      Returns @false if move was not possible and Position didn't change.
+      Returns @true is some move occured (but don't assume too much:
+      possibly we didn't move to exactly Position + MoveVector
+      because of wall sliding). }
+    function Move(const MoveVector: TVector3;
+      const BecauseOfGravity, CheckClimbHeight: boolean): boolean;
+
+    { Zoom in / out.
+      Negative Factor makes "zoom out", positive makes "zoom in" (zero makes nothing).
+
+      Called only if @link(ZoomEnabled), so no need to check it within implementation.
+
+      Factor values correspond to TInputPressRelease.MouseWheelScroll values,
+      so 1.0 should be treated like a "one operation" and some systems only generate
+      values -1 or +1 (and never fractions). }
+    function Zoom(const Factor: Single): Boolean; virtual;
   public
     const
       { Default value for TCastleNavigation.Radius.
@@ -296,10 +334,10 @@ type
     procedure AnimateTo(const APos, ADir, AUp: TVector3; const Time: TFloatTime); overload; deprecated 'use Viewport.Camera.AnimateTo';
     function Animation: boolean; deprecated 'use Viewport.Camera.Animation';
 
-    { Approximate size of 3D world that is viewed,
-      used by @link(TCastleExamineNavigation) descendant.
-      Determines speed of movement and zooming.
-      Initially this is TBox3D.Empty. }
+    { Approximate size of the world that is viewed.
+      Determines the speed of zooming and (in case of TCastleExamineNavigation) of many other operations too.
+      Initially this is an empty box.
+      Internally we will use the Viewport.Items.BoundingBox if this is empty. }
     property ModelBox: TBox3D read FModelBox write FModelBox;
 
     { Input methods available to user. See documentation of TNavigationInput
@@ -308,15 +346,36 @@ type
       To disable any user interaction with this navigation
       you can simply set this to empty. }
     property Input: TNavigationInputs read FInput write FInput default DefaultInput;
+
+    { Bring camera closer to the model. Works only if @link(ZoomEnabled).
+      By deafult mwUp (mouse wheel up). }
+    property Input_ZoomIn: TInputShortcut read FInput_ZoomIn;
+
+    { Bring camera further from the model. Works only if @link(ZoomEnabled).
+      By deafult mwDown (mouse wheel down). }
+    property Input_ZoomOut: TInputShortcut read FInput_ZoomOut;
   published
     // By default this captures events from whole parent, which should be whole Viewport.
     property FullSize default true;
 
+    // By default false, as this is invisible and would obscure viewport.
+    property EditorSelectOnHover default false;
+
+    { Enable zooming in / out.
+      Depending on the projection, zooming either moves camera or scales
+      the projection size.
+      When @false, no keys / mouse dragging / 3d mouse etc. can make a zoom.
+      If @true, at least mouse wheel makes a zoom (som,e navigation methods
+      may have additional ways to make zoom, they will all honor this property.) }
+    property ZoomEnabled: Boolean read FZoomEnabled write FZoomEnabled default false;
+
     { Check collisions when moving with the environment.
 
-      Note: some descendants, like TCastleExamineNavigation, ignore it and never check collisions
-      right now. But it may change in future engine versions, so be sure to set CheckCollisions
-      appropriately. }
+      Note: some descendants may ignore it for some operations.
+      Right now, TCastleWalkNavigation checks is always,
+      but TCastleExamineNavigation checks it only at zooming.
+      But future engine versions may harden the collision checks (to make them always),
+      so be sure to set CheckCollisions appropriately. }
     property CheckCollisions: Boolean read FCheckCollisions write FCheckCollisions default true;
   end;
 
@@ -335,7 +394,6 @@ type
     var
       FMoveEnabled: Boolean;
       FRotationEnabled: Boolean;
-      FZoomEnabled: Boolean;
       FDragMoveSpeed, FKeysMoveSpeed: Single;
       FExactMovement: Boolean;
       { Speed of rotations. Always zero when RotationAccelerate = false.
@@ -356,6 +414,8 @@ type
       FRotationSpeed: Single;
       FTurntable: boolean;
       FPinchGestureRecognizer: TCastlePinchPanGestureRecognizer;
+      FCenterOfRotation: TVector3;
+      FAutoCenterOfRotation: Boolean;
 
       FInputs_Move: T3BoolInputs;
       FInputs_Rotate: T3BoolInputs;
@@ -367,15 +427,11 @@ type
       FInput_Rotate: TInputShortcut;
       FInput_Zoom: TInputShortcut;
 
-    function GoodModelBox: TBox3D;
     procedure SetRotationsAnim(const Value: TVector3);
     function GetRotations: TQuaternion;
     procedure SetRotations(const Value: TQuaternion);
     function GetTranslation: TVector3;
     procedure SetTranslation(const Value: TVector3);
-    { Negative Factor makes "zoom out", positive makes "zoom on",
-      zero makes nothing. }
-    function Zoom(const Factor: Single): boolean;
     procedure SetRotationAccelerate(const Value: boolean);
     procedure OnGestureRecognized(Sender: TObject);
 
@@ -395,8 +451,9 @@ type
     function GetMouseNavigation: boolean;
     procedure SetMouseNavigation(const Value: boolean);
 
-    { Center of rotation and scale, relative to @link(Translation). }
-    function CenterOfRotation: TVector3;
+    { Center of rotation and scale, relative to @link(Translation).
+      In world coordinates. }
+    function EffectiveCenterOfRotation: TVector3;
 
     function GetExamineVectors: TExamineVectors;
     procedure SetExamineVectors(const Value: TExamineVectors);
@@ -494,8 +551,6 @@ type
     { Sets RotationsAnim to zero, stopping the rotation of the model. }
     function StopRotating: boolean;
 
-    procedure Move(coord: integer; const MoveDistance: Single); deprecated 'set Translation instead of using this method';
-
     { User inputs ------------------------------------------------------------ }
 
     { Alternative ways to access Input_Move/Rotate(X|Y|Z)(Inc|Dec).
@@ -557,6 +612,10 @@ type
       read FRotationSpeed
       write FRotationSpeed
       {$ifdef FPC}default DefaultRotationSpeed{$endif};
+
+    { 3D point around which we rotate, in world coordinates.
+      This is used only when AutoCenterOfRotation = @false. }
+    property CenterOfRotation: TVector3 read FCenterOfRotation write FCenterOfRotation;
   published
     { Enable rotating the camera around the model by user input.
       When @false, no keys / mouse dragging / 3D mouse etc. can cause a rotation.
@@ -572,11 +631,7 @@ type
       @link(Translation) property or calling @link(TCastleTransform.SetWorldView Camera.SetWorldView). }
     property MoveEnabled: Boolean read FMoveEnabled write FMoveEnabled default true;
 
-    { Enable zooming the camera on the model by user input.
-      Depending on the projection, zooming either moves camera or scales
-      the projection size.
-      When @false, no keys / mouse dragging / 3d mouse etc. can make a zoom. }
-    property ZoomEnabled: Boolean read FZoomEnabled write FZoomEnabled default true;
+    property ZoomEnabled default true;
 
     { When @true, rotation keys make the rotation faster, and the model keeps
       rotating even when you don't hold any keys. When @false, you have to
@@ -588,6 +643,10 @@ type
       move the camera exactly as many units as the mouse position change indicates.
       Makes the movemement in standard orthographic view most natural. }
     property ExactMovement: Boolean read FExactMovement write FExactMovement default true;
+
+    { Should we calculate center of rotation automatically (based on world bounding box)
+      or use explicit @link(CenterOfRotation). }
+    property AutoCenterOfRotation: Boolean read FAutoCenterOfRotation write FAutoCenterOfRotation default true;
   end;
 
   { Navigation most suitable for 2D viewports
@@ -634,9 +693,10 @@ type
     procedure Update(const SecondsPassed: Single;
       var HandleInput: boolean); override;
     function Motion(const Event: TInputMotion): boolean; override;
+    function PropertySections(const PropertyName: String): TPropertySections; override;
 
     function InternalUsingMouseLook: Boolean;
-
+  published
     { Use mouse look to navigate (rotate the camera).
 
       This also makes mouse cursor of Container hidden, and forces
@@ -742,34 +802,21 @@ type
     procedure RotateHorizontal(const Angle: Single);
     procedure RotateVertical(AngleRad: Single);
 
-    { Like Move, but you pass here final ProposedNewPos. }
-    function MoveTo(const ProposedNewPos: TVector3;
-      const BecauseOfGravity, CheckClimbHeight: boolean): boolean;
-    { Try to move from current Position to Position + MoveVector.
-      Checks MoveAllowed, also (if CheckClimbHeight is @true)
-      checks the ClimbHeight limit.
+    { Move horizontally.
+      Dir is in camera parent coordinates, like Camera.Direction.
+      It will be automatically adjusted to be parallel to gravity plane,
+      if PreferGravityUpForMoving. }
+    procedure MoveHorizontal(Dir: TVector3; const SecondsPassed: Single);
 
-      Returns @false if move was not possible and Position didn't change.
-      Returns @true is some move occured (but don't assume too much:
-      possibly we didn't move to exactly Position + MoveVector
-      because of wall sliding). }
-    function Move(const MoveVector: TVector3;
-      const BecauseOfGravity, CheckClimbHeight: boolean): boolean;
-    { Forward or backward move. Multiply must be +1 or -1. }
-    procedure MoveHorizontal(const SecondsPassed: Single; const Multiply: Integer = 1);
     { Up or down move, only when flying (ignored when @link(Gravity) is @true). }
     procedure MoveVertical(const SecondsPassed: Single; const Multiply: Integer);
-    { Like RotateHorizontal, but it uses
-      PreferGravityUpForMoving to decide which rotation to use.
-      This way when PreferGravityUpForMoving, then we rotate versus GravityUp,
-      move in GravityUp plane, and then rotate back versus GravityUp.
-      If not PreferGravityUpForMoving, then we do all this versus Up.
-      And so everything works. }
-    procedure RotateHorizontalForStrafeMove(const Angle: Single);
 
     { Call always after horizontal rotation change.
-      This will return new Position, applying effect of RotationHorizontalPivot. }
+      This will return new Position, applying effect of RotationHorizontalPivot.
+      The OldPosition, OldDirection, NewDirection must be in world coordinates,
+      so is the result. }
     function AdjustPositionForRotationHorizontalPivot(
+      const OldPosition: TVector3;
       const OldDirection, NewDirection: TVector3): TVector3;
 
     { Jump.
@@ -778,6 +825,19 @@ type
       jump when there's no gravity, or you're already in the middle
       of the jump. Can be useful to determine if key was handled and such. }
     function Jump: boolean;
+
+    { Camera.GravityUp expressed in camera parent coordinate system. }
+    function GravityUpLocal: TVector3;
+
+    { Direction to strafe left.
+      In camera parent coordinate space, just like Camera.Direction.
+      This is not adjusted using PreferGravityUpForMoving/Rotations. }
+    function DirectionLeft: TVector3;
+
+    { Direction to strafe right.
+      In camera parent coordinate space, just like Camera.Direction.
+      This is not adjusted using PreferGravityUpForMoving/Rotations. }
+    function DirectionRight: TVector3;
   private
     { Private things related to gravity ---------------------------- }
 
@@ -822,6 +882,9 @@ type
   protected
     function ReallyEnableMouseDragging: boolean; override;
     procedure ProcessMouseLookDelta(const Delta: TVector2); override;
+    function MoveAllowed(
+      const OldPos: TVector3; ProposedNewPos: TVector3; out NewPos: TVector3;
+      const BecauseOfGravity, CheckClimbHeight: Boolean): Boolean; override;
   public
     const
       DefaultFallSpeedStart = 0.5;
@@ -924,18 +987,6 @@ type
       read FPreferGravityUpForMoving write FPreferGravityUpForMoving default true;
     { @groupEnd }
 
-    { Return @link(TCastleTransform.Direction Camera.Direction) vector rotated such that it is
-      orthogonal to GravityUp. This way it returns
-      @link(TCastleTransform.Direction Camera.Direction) projected
-      on the gravity horizontal plane, which neutralizes such things
-      like raising / bowing your head.
-      Result is always normalized (length 1).
-
-      Note that when @link(TCastleTransform.Direction Camera.Direction) and GravityUp are parallel,
-      this just returns current @link(TCastleTransform.Direction Camera.Direction) --- because in such case
-      we can't project @link(TCastleTransform.Direction Camera.Direction) on the horizontal plane. }
-    function DirectionInGravityPlane: TVector3;
-
     { Set the most important properties of this navigation, in one call.
       Sets camera properties (Translation, Direction, Up).
 
@@ -980,6 +1031,8 @@ type
     property MinAngleFromGravityUp: Single
       read FMinAngleFromGravityUp write FMinAngleFromGravityUp
       {$ifdef FPC}default DefaultMinAngleFromGravityUp{$endif};
+
+    function DirectionInGravityPlane: TVector3; deprecated 'avoid using it, as it inherently has difficult cases: it is in TCastleCamera local coordinate space, it cannot be correct when Direction is parallel to gravity';
 
     function Motion(const Event: TInputMotion): boolean; override;
 
@@ -1131,6 +1184,8 @@ type
       pointer for anything. But if you use this pointer,
       then you may want to take care to eventually set it to @nil when
       your octree or such is released.
+
+      AboveHeight is in world coordinates (not camera coordinates).
 
       @groupBegin }
     property IsAbove: boolean read FIsAbove;
@@ -1467,24 +1522,36 @@ begin
   MouseDraggingStarted := -1;
 
   FullSize := true;
+  EditorSelectOnHover := false;
+
+  FInput_ZoomIn      := TInputShortcut.Create(Self);
+   Input_ZoomIn.Assign(keyNone, keyNone, '', false, buttonLeft, mwUp);
+   Input_ZoomIn.SetSubComponent(true);
+   Input_ZoomIn.Name := 'Input_ZoomIn';
+
+  FInput_ZoomOut     := TInputShortcut.Create(Self);
+   Input_ZoomOut.Assign(keyNone, keyNone, '', false, buttonLeft, mwDown);
+   Input_ZoomOut.SetSubComponent(true);
+   Input_ZoomOut.Name := 'Input_ZoomOut';
 end;
 
 function TCastleNavigation.MoveAllowed(
   const OldPos: TVector3; ProposedNewPos: TVector3; out NewPos: TVector3;
-  const Radius: Single; const BecauseOfGravity: Boolean): Boolean;
+  const BecauseOfGravity, CheckClimbHeight: Boolean): Boolean;
 begin
   Result := true;
   NewPos := ProposedNewPos;
 
   if Result and Valid and CheckCollisions then
   begin
-    Result := (InternalViewport as TCastleViewport).InternalNavigationMoveAllowed(Self, Camera.Translation, ProposedNewPos, NewPos, Radius, BecauseOfGravity);
+    Result := (InternalViewport as TCastleViewport).InternalNavigationMoveAllowed(
+      Self, OldPos, ProposedNewPos, NewPos, Radius, BecauseOfGravity);
     // update ProposedNewPos for OnMoveAllowed call
     if Result then
       ProposedNewPos := NewPos;
   end;
   if Result and Assigned(OnMoveAllowed) then
-    Result := OnMoveAllowed(Self, Camera.Translation, ProposedNewPos, NewPos, Radius, BecauseOfGravity);
+    Result := OnMoveAllowed(Self, OldPos, ProposedNewPos, NewPos, Radius, BecauseOfGravity);
 end;
 
 procedure TCastleNavigation.Height(const APosition: TVector3;
@@ -1613,7 +1680,14 @@ begin
       for unknown reason clicking on TouchSensor then still allows navigation like Walk
       to receive mouse dragging.
       Testcase: demo-models, touch_sensor_tests.x3dv }
-    // Exit(ExclusiveEvents);
+    // Exit(true);
+  end;
+
+  if (Event.EventType = itMouseWheel) and
+     ZoomEnabled then
+  begin
+    if Zoom(Event.MouseWheelScroll) then
+      Exit(true);
   end;
 end;
 
@@ -1705,10 +1779,171 @@ end;
 function TCastleNavigation.PropertySections(
   const PropertyName: String): TPropertySections;
 begin
-  if (PropertyName = 'CheckCollisions') then
+  if (PropertyName = 'CheckCollisions') or
+     (PropertyName = 'ZoomEnabled') then
     Result := [psBasic]
   else
     Result := inherited PropertySections(PropertyName);
+end;
+
+function TCastleNavigation.MoveTo(const LocalProposedNewPos: TVector3;
+  const BecauseOfGravity, CheckClimbHeight: boolean): boolean;
+var
+  OldPos, NewPos: TVector3;
+  WorldProposedNewPos: TVector3;
+begin
+  // most of calculations inside are in world coordinates
+  if (Camera.Parent <> nil) and
+     (Camera.World <> nil) then
+  begin
+    OldPos := Camera.Parent.LocalToWorld(Camera.Translation);
+    WorldProposedNewPos := Camera.Parent.LocalToWorld(LocalProposedNewPos);
+  end else
+  begin
+    OldPos := Camera.Translation;
+    WorldProposedNewPos := LocalProposedNewPos;
+  end;
+
+  Result := MoveAllowed(OldPos, WorldProposedNewPos, NewPos, BecauseOfGravity, CheckClimbHeight);
+
+  if Result then
+  begin
+    // convert back from world to local coordinates
+    if (Camera.Parent <> nil) and
+       (Camera.World <> nil) then
+    begin
+      NewPos := Camera.Parent.WorldToLocal(NewPos);
+    end;
+
+    Camera.Translation := NewPos;
+  end;
+end;
+
+function TCastleNavigation.Move(const MoveVector: TVector3;
+  const BecauseOfGravity, CheckClimbHeight: boolean): boolean;
+begin
+  Result := MoveTo(Camera.Translation + MoveVector, BecauseOfGravity, CheckClimbHeight);
+end;
+
+function TCastleNavigation.GoodModelBox: TBox3D;
+begin
+  { Try hard to return non-empty bounding box, otherwise examine navigation
+    doesn't work sensibly, as movement and zooming speed must depend on box
+    sizes.
+
+    This is important in case you use TCastleExamineNavigation without
+    setting it's ModelBox explicitly, which happens e.g. when CGE editor
+    adds TCastleExamineNavigation.
+
+    Note: We use Items.BoundingBox, not (private) ItemsBoundingBox
+    that avoids adding gizmos to bbox.
+    Right now it doesn't matter (as we don't need this box to be precise,
+    we dont' zoom to box center) so it's better to use Items.BoundingBox
+    and keep ItemsBoundingBox private.
+  }
+  if ModelBox.IsEmpty and
+     (InternalViewport <> nil) then
+    Result := (InternalViewport as TCastleViewport).Items.BoundingBox
+  else
+    Result := ModelBox;
+end;
+
+function TCastleNavigation.Zoom(const Factor: Single): Boolean;
+const
+  { Multiplier for Factor. }
+  Speed = 1 / 30;
+
+  function OrthographicProjection: Boolean;
+  begin
+    { See how perspective (and more flexible frustum) projection matrices
+      look like in CastleProjection, they have always -1 in this field. }
+    Result := Camera.ProjectionMatrix.Data[2, 3] = 0;
+  end;
+
+var
+  Size: Single;
+  //MoveWorldDir, ToCenter, MoveDir, CamWorldPos, CamWorldDir, CamWorldUp: TVector3;
+  B: TBox3D;
+  SavedCheckCollisions: Boolean;
+begin
+  Result := false;
+
+  if Valid then
+  begin
+    if OrthographicProjection then
+    begin
+      { In case of OrthographicProjection, changing Translation
+        would have no effect. So instead scale the projection size. }
+      if (Camera.Orthographic.Width = 0) and
+         (Camera.Orthographic.Height = 0) then
+      begin
+        { Note: We had approach in CGE to make Orthographic.Scale,
+          to enable scaling orthographic view always.
+          But it was unnatural to not change Orthographic.Width/Height
+          in the most common case, which is that Orthographic.Width/Height
+          is non-zero. }
+        WritelnWarning('Scaling orthographic view is not possible without setting Camera.Orthographic.Width / Camera.Orthographic.Height to non-zero')
+      end else
+      begin
+        Camera.Orthographic.Width  := Camera.Orthographic.Width  * Exp(-Factor * Speed);
+        Camera.Orthographic.Height := Camera.Orthographic.Height * Exp(-Factor * Speed);
+        Result := true;
+      end;
+    end else
+    begin
+      { In perspective projection, zoom by changing Translation }
+      B := GoodModelBox;
+      if B.IsEmptyOrZero then
+        Exit;
+
+      Size := B.AverageSize;
+
+      (*
+      // We used to have here a complicated logic that zooms into bbox center.
+      // In the end, this is not necessary and not intuitive.
+      // Let zoom now just move forward/backward.
+
+      Camera.GetWorldView(CamWorldPos, CamWorldDir, CamWorldUp);
+
+      ToCenter := B.Center - CamWorldPos;
+      if ToCenter.IsZero then
+        ToCenter := CamWorldDir
+      else
+        ToCenter := ToCenter.Normalize;
+
+      if Factor > 0 then // zoom in, move along ToCenter
+      begin
+        { Don't allow moving with "zoom in" if we're looking at the other side. }
+        if TVector3.DotProduct(ToCenter, CamWorldDir) < 0 then
+          Exit;
+      end else
+      begin
+        { Always allow "zoom out", camera direction determines in which direction we move.
+          This allows to et out from the "maximum zoom in" view always,
+          even if camera effectively "crossed over" the box middle. }
+        if TVector3.DotProduct(ToCenter, CamWorldDir) < 0 then
+          ToCenter := -ToCenter;
+      end;
+
+      MoveWorldDir := Factor * Size * ToCenter;
+
+      if (Camera.Parent <> nil) and
+         (Camera.World <> nil) then
+        MoveDir := Camera.Parent.WorldToLocalDirection(MoveWorldDir)
+      else
+        Exit;
+      *)
+
+      SavedCheckCollisions := CheckCollisions;
+      if Factor < 0 then
+        CheckCollisions := false; // never check collisions when zooming out
+      try
+        Result := Move(Camera.Direction * Size * Factor * Speed, false, false);
+      finally
+        CheckCollisions := SavedCheckCollisions;
+      end;
+    end;
+  end;
 end;
 
 { TCastleExamineNavigation ------------------------------------------------------------ }
@@ -1731,7 +1966,7 @@ begin
 
   FRotationEnabled := true;
   FMoveEnabled := true;
-  FZoomEnabled := true;
+  ZoomEnabled := true;
   FRotationsAnim := TVector3.Zero;
   FDragMoveSpeed := 1;
   FKeysMoveSpeed := 1;
@@ -1743,6 +1978,7 @@ begin
   FPinchGestureRecognizer := TCastlePinchPanGestureRecognizer.Create;
   FPinchGestureRecognizer.OnGestureChanged := {$ifdef FPC}@{$endif}OnGestureRecognized;
   FExactMovement := true;
+  FAutoCenterOfRotation := true;
 
   for I := 0 to 2 do
     for B := false to true do
@@ -1884,10 +2120,10 @@ begin
     of Translation. But we can do this directly.
 
     We also note at this point that rotation is done around
-    (Translation + CenterOfRotation). But CenterOfRotation is not
+    (Translation + EffectiveCenterOfRotation). But EffectiveCenterOfRotation is not
     included in Translation. }
-  Result.Translation := Result.Rotations.Rotate(Result.Translation + CenterOfRotation)
-    - CenterOfRotation;
+  Result.Translation := Result.Rotations.Rotate(Result.Translation + EffectiveCenterOfRotation)
+    - EffectiveCenterOfRotation;
 end;
 
 procedure TCastleExamineNavigation.SetExamineVectors(const Value: TExamineVectors);
@@ -1895,9 +2131,9 @@ var
   MInverse: TMatrix4;
 begin
   MInverse :=
-    TranslationMatrix(CenterOfRotation) *
+    TranslationMatrix(EffectiveCenterOfRotation) *
     Value.Rotations.Conjugate.ToRotationMatrix *
-    TranslationMatrix(-(Value.Translation + CenterOfRotation));
+    TranslationMatrix(-(Value.Translation + EffectiveCenterOfRotation));
 
   { These MultPoint/Direction should never fail with ETransformedResultInvalid.
     That's because M is composed from translations, rotations, scaling,
@@ -1908,21 +2144,6 @@ begin
     MInverse.MultDirection(DefaultCameraDirection),
     MInverse.MultDirection(DefaultCameraUp)
   );
-end;
-
-function TCastleExamineNavigation.GoodModelBox: TBox3D;
-begin
-  { Try hard to return non-empty bounding box, otherwise examine navigation
-    doesn't work sensibly, as movement and zooming speed must depend on box
-    sizes.
-    This is important in case you use TCastleExamineNavigation without
-    setting it's ModelBox explicitly, which happens e.g. when CGE editor
-    adds TCastleExamineNavigation. }
-  if ModelBox.IsEmpty and
-     (InternalViewport <> nil) then
-    Result := (InternalViewport as TCastleViewport).Items.BoundingBox
-  else
-    Result := ModelBox;
 end;
 
 procedure TCastleExamineNavigation.Update(const SecondsPassed: Single;
@@ -1939,8 +2160,8 @@ var
     if not RotationEnabled then Exit;
 
     if RotationAccelerate then
-      FRotationsAnim.InternalData[coord] :=
-        Clamped(FRotationsAnim.InternalData[coord] +
+      FRotationsAnim.Data[coord] :=
+        Clamped(FRotationsAnim.Data[coord] +
           RotationAccelerationSpeed * SecondsPassed * Direction,
           -MaxRotationSpeed, MaxRotationSpeed)
     else
@@ -1955,7 +2176,7 @@ var
   RotChange: Single;
   MoveChangeVector: TVector3;
 const
-  KeyZoomSpeed = 10.0;
+  KeyZoomSpeed = 30.0 * 10.0;
 begin
   inherited;
 
@@ -2003,18 +2224,18 @@ begin
         if Inputs_Move[i, true ].IsPressed(Container) then
         begin
           MoveChangeVector := TVector3.Zero;
-          MoveChangeVector.InternalData[I] := MoveChange;
+          MoveChangeVector.Data[I] := MoveChange;
           V.Translation := V.Translation + MoveChangeVector;
 
-          HandleInput := not ExclusiveEvents;
+          HandleInput := false;
         end;
         if Inputs_Move[i, false].IsPressed(Container) then
         begin
           MoveChangeVector := TVector3.Zero;
-          MoveChangeVector.InternalData[I] := -MoveChange;
+          MoveChangeVector.Data[I] := -MoveChange;
           V.Translation := V.Translation + MoveChangeVector;
 
-          HandleInput := not ExclusiveEvents;
+          HandleInput := false;
         end;
       end;
     end else
@@ -2025,12 +2246,12 @@ begin
         if Inputs_Rotate[i, true ].IsPressed(Container) then
         begin
           RotateSpeedOrAngle(i, +1);
-          HandleInput := not ExclusiveEvents;
+          HandleInput := false;
         end;
         if Inputs_Rotate[i, false].IsPressed(Container) then
         begin
           RotateSpeedOrAngle(i, -1);
-          HandleInput := not ExclusiveEvents;
+          HandleInput := false;
         end;
       end;
     end;
@@ -2044,12 +2265,12 @@ begin
     if Input_ScaleLarger.IsPressed(Container) then
     begin
       Zoom(KeyZoomSpeed * SecondsPassed);
-      HandleInput := not ExclusiveEvents;
+      HandleInput := false;
     end;
     if Input_ScaleSmaller.IsPressed(Container) then
     begin
       Zoom(-KeyZoomSpeed * SecondsPassed);
-      HandleInput := not ExclusiveEvents;
+      HandleInput := false;
     end;
   end;
 end;
@@ -2075,15 +2296,6 @@ begin
     FRotationsAnim := TVector3.Zero;
 end;
 
-procedure TCastleExamineNavigation.Move(coord: integer; const MoveDistance: Single);
-var
-  V: TVector3;
-begin
-  V := TVector3.Zero;
-  V.InternalData[Coord] := MoveDistance;
-  Translation := Translation + V;
-end;
-
 function TCastleExamineNavigation.SensorTranslation(const X, Y, Z, Length: Double;
   const SecondsPassed: Single): boolean;
 var
@@ -2105,7 +2317,7 @@ begin
     Translation := Translation + Vector3(0, Size * Y * MoveSize, 0);
 
   if Abs(Z) > 5 then   { backward / forward }
-    Zoom(Z * MoveSize / 2);
+    Zoom(Z * MoveSize * 30 / 2);
 end;
 
 function TCastleExamineNavigation.SensorRotation(const X, Y, Z, Angle: Double;
@@ -2200,15 +2412,19 @@ begin
   ExamineVectors := V;
 end;
 
-function TCastleExamineNavigation.CenterOfRotation: TVector3;
+function TCastleExamineNavigation.EffectiveCenterOfRotation: TVector3;
 var
   B: TBox3D;
 begin
-  B := GoodModelBox;
-  if B.IsEmpty then
-    Result := Vector3(0, 0, 0) { any dummy value }
-  else
-    Result := B.Center;
+  if AutoCenterOfRotation then
+  begin
+    B := GoodModelBox;
+    if B.IsEmpty then
+      Result := Vector3(0, 0, 0) { any dummy value }
+    else
+      Result := B.Center;
+  end else
+    Result := CenterOfRotation;
 end;
 
 function TCastleExamineNavigation.Press(const Event: TInputPressRelease): boolean;
@@ -2223,8 +2439,6 @@ function TCastleExamineNavigation.Press(const Event: TInputPressRelease): boolea
     Camera.GravityUp := AGravityUp;
   end;
 
-var
-  ZoomScale: Single;
 begin
   Result := inherited;
   if Result or
@@ -2233,42 +2447,29 @@ begin
     Exit;
 
   if (niGesture in UsingInput) and FPinchGestureRecognizer.Press(Event) then
-    Exit(ExclusiveEvents);
+    Exit(true);
 
   if not (niNormal in UsingInput) then Exit;
 
-  if Event.EventType <> itMouseWheel then
+  if Input_StopRotating.IsEvent(Event) then
   begin
-    if Input_StopRotating.IsEvent(Event) then
-    begin
-      { If StopRotating was useless, do not mark the event as "handled".
-        This is necessary to avoid having mouse clicks "stolen" by the TCastleExamineNavigation
-        when an empty TCastleViewport is being used
-        (and thus, mouse clicks could instead be used by other control).
-        It was necessary with deprecated TCastleControl/TCastleWindow:
-        on empty window, mouse clicks would be "mysteriously" intercepted,
-        since the default scene manager creates
-        examine camera, and it captures left mouse click as Input_StopRotating. }
-      if StopRotating then
-        Result := ExclusiveEvents;
-    end else
-    if Input_Home.IsEvent(Event) then
-    begin
-      CameraInitial;
-      Result := ExclusiveEvents;
-    end else
-      Result := false;
+    { If StopRotating was useless, do not mark the event as "handled".
+      This is necessary to avoid having mouse clicks "stolen" by the TCastleExamineNavigation
+      when an empty TCastleViewport is being used
+      (and thus, mouse clicks could instead be used by other control).
+      It was necessary with deprecated TCastleControl/TCastleWindow:
+      on empty window, mouse clicks would be "mysteriously" intercepted,
+      since the default scene manager creates
+      examine camera, and it captures left mouse click as Input_StopRotating. }
+    if StopRotating then
+      Result := true;
   end else
-  if ZoomEnabled then
+  if Input_Home.IsEvent(Event) then
   begin
-    { For now, doing Zoom on mouse wheel is hardcoded, we don't call EventDown here }
-
-    if Turntable then
-      ZoomScale := 30 else
-      ZoomScale := 10;
-    if Zoom(Event.MouseWheelScroll / ZoomScale) then
-       Result := ExclusiveEvents;
-  end;
+    CameraInitial;
+    Result := true;
+  end else
+    Result := false;
 end;
 
 function TCastleExamineNavigation.Release(const Event: TInputPressRelease): boolean;
@@ -2277,68 +2478,7 @@ begin
   if Result then Exit;
 
   if (niGesture in UsingInput) and FPinchGestureRecognizer.Release(Event) then
-    Exit(ExclusiveEvents);
-end;
-
-function TCastleExamineNavigation.Zoom(const Factor: Single): boolean;
-
-  function OrthographicProjection: Boolean;
-  begin
-    { See how perspective (and more flexible frustum) projection matrices
-      look like in CastleProjection, they have always -1 in this field. }
-    Result := Camera.ProjectionMatrix.Data[2, 3] = 0;
-  end;
-
-var
-  Size: Single;
-  OldTranslation, OldCameraTranslation: TVector3;
-  B: TBox3D;
-begin
-  B := GoodModelBox;
-  Result := not B.IsEmptyOrZero;
-  if Result then
-  begin
-    if OrthographicProjection then
-    begin
-      { In case of OrthographicProjection, changing Translation
-        would have no effect. So instead scale the projection size. }
-      if (Camera.Orthographic.Width = 0) and
-         (Camera.Orthographic.Height = 0) then
-      begin
-        { Note: We had approach in CGE to make Orthographic.Scale,
-          to enable scaling orthographic view always.
-          But it was unnatural to not change Orthographic.Width/Height
-          in the most common case, which is that Orthographic.Width/Height
-          is non-zero. }
-        WritelnWarning('Scaling orthographic view is not possible without setting Camera.Orthographic.Width / Camera.Orthographic.Height to non-zero')
-      end else
-      begin
-        Camera.Orthographic.Width  := Camera.Orthographic.Width  * Exp(-Factor);
-        Camera.Orthographic.Height := Camera.Orthographic.Height * Exp(-Factor);
-      end;
-    end else
-    begin
-      { zoom by changing Translation }
-      Size := B.AverageSize;
-
-      OldTranslation := Translation;
-      OldCameraTranslation := Camera.Translation;
-
-      Translation := Translation + Vector3(0, 0, Size * Factor);
-
-      { Cancel zoom in, don't allow to go to the other side of the model too far.
-        Note that TBox3D.PointDistance = 0 when you're inside the box,
-        so zoomin in/out inside the box is still always allowed.
-        See http://sourceforge.net/apps/phpbb/vrmlengine/viewtopic.php?f=3&t=24 }
-      if (Factor > 0) and
-         (B.PointDistance(Camera.Translation) >
-          B.PointDistance(OldCameraTranslation)) then
-      begin
-        Translation := OldTranslation;
-        Exit(false);
-      end;
-    end;
-  end;
+    Exit(true);
 end;
 
 function TCastleExamineNavigation.Motion(const Event: TInputMotion): boolean;
@@ -2486,7 +2626,7 @@ begin
     Dpi := DefaultDpi;
 
   if (niGesture in UsingInput) and FPinchGestureRecognizer.Motion(Event, Dpi) then
-    Exit(ExclusiveEvents);
+    Exit(true);
 
   MoveDivConst := Dpi;
 
@@ -2501,13 +2641,13 @@ begin
   if RotationEnabled and Input_Rotate.IsPressed(Container.Pressed, Container.MousePressed) then
   begin
     DragRotation;
-    Result := ExclusiveEvents;
+    Result := true;
   end;
 
   if ZoomEnabled and Input_Zoom.IsPressed(Container.Pressed, Container.MousePressed) then
   begin
-    if Zoom((Event.OldPosition[1] - Event.Position[1]) / (2*MoveDivConst)) then
-      Result := ExclusiveEvents;
+    if Zoom((Event.OldPosition[1] - Event.Position[1]) * 30 / (2 * MoveDivConst)) then
+      Result := true;
   end;
 
   if MoveEnabled and Input_Move.IsPressed(Container.Pressed, Container.MousePressed) then
@@ -2519,7 +2659,7 @@ begin
     begin
       MoveNonExact;
     end;
-    Result := ExclusiveEvents;
+    Result := true;
   end;
 end;
 
@@ -2542,10 +2682,10 @@ begin
     else
       Factor := -40 * (1.0/Recognizer.PinchScaleFactor - 1.0);
     if Turntable then
-      ZoomScale := 30
+      ZoomScale := 1
     else
-      ZoomScale := 10;
-    Zoom(Factor / ZoomScale);
+      ZoomScale := 3;
+    Zoom(Factor * ZoomScale);
   end;
 
   if MoveEnabled and (not GoodModelBox.IsEmpty) and (Recognizer.Gesture = gtPan) then
@@ -2589,7 +2729,6 @@ function TCastleExamineNavigation.PropertySections(
 begin
   if (PropertyName = 'MoveEnabled') or
      (PropertyName = 'RotationEnabled') or
-     (PropertyName = 'ZoomEnabled') or
      (PropertyName = 'RotationAccelerate') or
      (PropertyName = 'ExactMovement') then
     Result := [psBasic]
@@ -2673,7 +2812,7 @@ function TCastleMouseLookNavigation.Motion(const Event: TInputMotion): boolean;
       MouseChange.X := MouseChange.X * MouseLookHorizontalSensitivity;
       MouseChange.Y := MouseChange.Y * MouseLookVerticalSensitivity;
       ProcessMouseLookDelta(MouseChange);
-      Result := ExclusiveEvents;
+      Result := true;
     end;
   end;
 
@@ -2698,6 +2837,18 @@ begin
   { Note: we used to have here condition "and (not CastleDesignMode)"
     as escaping from MouseLook was impossible, if you enable it in Object Inspector.
     But it is OK now: our TCastleWalkNavigationDesign makes mouse look intuitive to use. }
+end;
+
+function TCastleMouseLookNavigation.PropertySections(const PropertyName: String): TPropertySections;
+begin
+  if ArrayContainsString(PropertyName, [
+       'MouseLook', 'MouseLookHorizontalSensitivity', 'MouseLookVerticalSensitivity',
+       'InvertVerticalMouseLook'
+     ]) then
+    Result := [psBasic]
+  else
+    Result := inherited PropertySections(PropertyName);
+
 end;
 
 { TCastleWalkNavigation ---------------------------------------------------------------- }
@@ -2811,6 +2962,39 @@ begin
   inherited;
 end;
 
+function TCastleWalkNavigation.MoveAllowed(
+  const OldPos: TVector3; ProposedNewPos: TVector3; out NewPos: TVector3;
+  const BecauseOfGravity, CheckClimbHeight: Boolean): Boolean;
+var
+  NewIsAbove: boolean;
+  NewAboveHeight, OldAbsoluteHeight, NewAbsoluteHeight: Single;
+  NewAboveGround: PTriangle;
+begin
+  Result := inherited;
+
+  if Result and Gravity and CheckClimbHeight and (ClimbHeight <> 0) and IsAbove and
+    { if we're already below ClimbHeight then do not check if new position
+      satisfies ClimbHeight requirement. This may prevent camera blocking
+      in weird situations, e.g. if were forcefully pushed into some position
+      (e.g. because player is hit by a missile with a knockback, or teleported
+      or such). }
+    (AboveHeight > ClimbHeight) then
+  begin
+    Height(NewPos, NewIsAbove, NewAboveHeight, NewAboveGround);
+    if NewIsAbove then
+    begin
+      OldAbsoluteHeight := TVector3.DotProduct(Camera.GravityUp, OldPos);
+      NewAbsoluteHeight := TVector3.DotProduct(Camera.GravityUp, NewPos);
+      Result := not (
+        AboveHeight - NewAboveHeight - (OldAbsoluteHeight - NewAbsoluteHeight) >
+        ClimbHeight );
+      // useful log to test ClimbHeight, but too spammy to be enabled by default
+      // if Log and not Result then
+      //   WritelnLog('Camera', 'Blocked move because of ClimbHeight (%f).', [ClimbHeight]);
+    end;
+  end;
+end;
+
 procedure TCastleWalkNavigation.CorrectPreferredHeight;
 begin
   CastleCameras.CorrectPreferredHeight(
@@ -2878,17 +3062,18 @@ begin
 end;
 
 function TCastleWalkNavigation.AdjustPositionForRotationHorizontalPivot(
+  const OldPosition: TVector3;
   const OldDirection, NewDirection: TVector3): TVector3;
 var
   Pivot, OldDirectionInGravityPlane, NewDirectionInGravityPlane: TVector3;
 begin
-  Result := Camera.Translation;
+  Result := OldPosition;
   {$warnings off} // using deprecated RotationHorizontalPivot to keep it working
   if RotationHorizontalPivot <> 0 then
   begin
     if PreferGravityUpForRotations then
     begin
-      Pivot := Camera.Translation + OldDirection * RotationHorizontalPivot;
+      Pivot := OldPosition + OldDirection * RotationHorizontalPivot;
       Result := Pivot - NewDirection * RotationHorizontalPivot;
     end else
     begin
@@ -2898,7 +3083,7 @@ begin
       NewDirectionInGravityPlane := NewDirection;
       if not VectorsParallel(NewDirectionInGravityPlane, Camera.GravityUp) then
         MakeVectorsOrthoOnTheirPlane(NewDirectionInGravityPlane, Camera.GravityUp);
-      Pivot := Camera.Translation + OldDirectionInGravityPlane * RotationHorizontalPivot;
+      Pivot := OldPosition + OldDirectionInGravityPlane * RotationHorizontalPivot;
       Result := Pivot - NewDirectionInGravityPlane * RotationHorizontalPivot;
     end;
   end;
@@ -2924,7 +3109,7 @@ begin
   NewUp        := RotatePointAroundAxisRad(Angle,        OldUp, GravityAxis);
   NewDirection := RotatePointAroundAxisRad(Angle, OldDirection, GravityAxis);
 
-  NewPosition := AdjustPositionForRotationHorizontalPivot(OldDirection, NewDirection);
+  NewPosition := AdjustPositionForRotationHorizontalPivot(OldPosition, OldDirection, NewDirection);
 
   Camera.SetWorldView(NewPosition, NewDirection, NewUp);
 end;
@@ -2940,7 +3125,7 @@ begin
     and it will keep NewDirection and OldUp vectors orthogonal. }
   NewDirection := RotatePointAroundAxisRad(Angle, OldDirection, OldUp);
 
-  NewPosition := AdjustPositionForRotationHorizontalPivot(OldDirection, NewDirection);
+  NewPosition := AdjustPositionForRotationHorizontalPivot(OldPosition, OldDirection, NewDirection);
 
   Camera.SetWorldView(NewPosition, NewDirection, OldUp);
 end;
@@ -3005,54 +3190,13 @@ begin
   Camera.SetWorldView(OldPosition, NewDirection, NewUp);
 end;
 
-function TCastleWalkNavigation.MoveTo(const ProposedNewPos: TVector3;
-  const BecauseOfGravity, CheckClimbHeight: boolean): boolean;
+procedure TCastleWalkNavigation.MoveHorizontal(Dir: TVector3;
+  const SecondsPassed: Single);
 var
-  NewPos: TVector3;
-  NewIsAbove: boolean;
-  NewAboveHeight, OldAbsoluteHeight, NewAbsoluteHeight: Single;
-  NewAboveGround: PTriangle;
-begin
-  Result := MoveAllowed(Camera.Translation, ProposedNewPos, NewPos, Radius, BecauseOfGravity);
-
-  if Result and Gravity and CheckClimbHeight and (ClimbHeight <> 0) and IsAbove and
-    { if we're already below ClimbHeight then do not check if new position
-      satisfies ClimbHeight requirement. This may prevent camera blocking
-      in weird situations, e.g. if were forcefully pushed into some position
-      (e.g. because player is hit by a missile with a knockback, or teleported
-      or such). }
-    (AboveHeight > ClimbHeight) then
-  begin
-    Height(NewPos, NewIsAbove, NewAboveHeight, NewAboveGround);
-    if NewIsAbove then
-    begin
-      OldAbsoluteHeight := TVector3.DotProduct(Camera.GravityUp, Camera.Translation);
-      NewAbsoluteHeight := TVector3.DotProduct(Camera.GravityUp, NewPos);
-      Result := not (
-        AboveHeight - NewAboveHeight - (OldAbsoluteHeight - NewAbsoluteHeight) >
-        ClimbHeight );
-      // useful log to test ClimbHeight, but too spammy to be enabled by default
-      // if Log and not Result then
-      //   WritelnLog('Camera', 'Blocked move because of ClimbHeight (%f).', [ClimbHeight]);
-    end;
-  end;
-
-  if Result then
-    Camera.Translation := NewPos;
-end;
-
-function TCastleWalkNavigation.Move(const MoveVector: TVector3;
-  const BecauseOfGravity, CheckClimbHeight: boolean): boolean;
-begin
-  Result := MoveTo(Camera.Translation + MoveVector, BecauseOfGravity, CheckClimbHeight);
-end;
-
-procedure TCastleWalkNavigation.MoveHorizontal(const SecondsPassed: Single; const Multiply: Integer = 1);
-var
-  Dir: TVector3;
   Multiplier: Single;
+  Grav: TVector3;
 begin
-  Multiplier := MoveSpeed * MoveHorizontalSpeed * SecondsPassed * Multiply;
+  Multiplier := MoveSpeed * MoveHorizontalSpeed * SecondsPassed;
   if IsJumping then
     Multiplier := Multiplier * JumpHorizontalSpeedMultiply;
   if Input_Run.IsPressed(Container) then
@@ -3065,12 +3209,18 @@ begin
     HeadBobbingAlreadyDone := true;
   end;
 
-  MoveHorizontalDone := true;
-
   if PreferGravityUpForMoving then
-    Dir := DirectionInGravityPlane else
-    Dir := Camera.Direction;
+  begin
+    Grav := GravityUpLocal;
+    if not VectorsParallel(Dir, Grav) then
+      MakeVectorsOrthoOnTheirPlane(Dir, Grav)
+    else
+      { Do not move at all, if Dir and Grav parallel.
+        This avoids moving vertically in such case. }
+      EXit;
+  end;
 
+  MoveHorizontalDone := true;
   Move(Dir * Multiplier, false, true);
 end;
 
@@ -3091,18 +3241,10 @@ begin
   if not Gravity then
   begin
     if PreferGravityUpForMoving then
-      MoveVerticalCore(Camera.GravityUp)
+      MoveVerticalCore(GravityUpLocal)
     else
       MoveVerticalCore(Camera.Up);
   end;
-end;
-
-procedure TCastleWalkNavigation.RotateHorizontalForStrafeMove(const Angle: Single);
-begin
-  if PreferGravityUpForMoving then
-    RotateAroundGravityUp(Angle)
-  else
-    RotateAroundUp(Angle);
 end;
 
 function TCastleWalkNavigation.ReallyEnableMouseDragging: boolean;
@@ -3149,7 +3291,7 @@ procedure TCastleWalkNavigation.Update(const SecondsPassed: Single;
         if FJumpHeight > MaxJumpDistance then
           FIsJumping := false else
           { do jumping }
-          Move(Camera.GravityUp * ThisJumpHeight, false, false);
+          Move(GravityUpLocal * ThisJumpHeight, false, false);
       end;
     end;
 
@@ -3175,7 +3317,7 @@ procedure TCastleWalkNavigation.Update(const SecondsPassed: Single;
           MoveSpeed * MoveVerticalSpeed * GrowSpeed * SecondsPassed,
           RealPreferredHeight - AboveHeight);
 
-        Move(Camera.GravityUp * GrowingVectorLength, true, false);
+        Move(GravityUpLocal * GrowingVectorLength, true, false);
 
         { When growing, TryFde_Stabilize also must be done.
           Otherwise when player walks horizontally on the flat surface
@@ -3268,7 +3410,7 @@ procedure TCastleWalkNavigation.Update(const SecondsPassed: Single;
         MoveSpeed * MoveVerticalSpeed * FFallSpeed * SecondsPassed;
       MinVar(FallingVectorLength, AboveHeight - RealPreferredHeight);
 
-      if Move(Camera.GravityUp * (- FallingVectorLength), true, false) and
+      if Move(GravityUpLocal * (- FallingVectorLength), true, false) and
         (not TVector3.PerfectlyEquals(Camera.Translation, PositionBefore)) then
       begin
         if not Falling then
@@ -3433,14 +3575,38 @@ procedure TCastleWalkNavigation.Update(const SecondsPassed: Single;
 
     function TryFallingOnTheGround: boolean;
     var
+      Grav: TVector3;
+
+      { Return @link(TCastleTransform.Direction Camera.Direction) vector rotated such that it is
+        orthogonal to GravityUp. This way it returns
+        @link(TCastleTransform.Direction Camera.Direction) projected
+        on the gravity horizontal plane, which neutralizes such things
+        like raising / bowing your head.
+
+        Result is always normalized (length 1).
+
+        Note that when @link(TCastleTransform.Direction Camera.Direction) and GravityUp are parallel,
+        this just returns current @link(TCastleTransform.Direction Camera.Direction) --- because in such case
+        we can't project @link(TCastleTransform.Direction Camera.Direction) on the horizontal plane.
+
+        Note that the result is in TCastleCamera parent coordinate space, just like Direction.
+        We automatically account for the fact that GravityUp is specified in world coordinate space. }
+      function DirInGravityPlane: TVector3;
+      begin
+        Result := Camera.Direction;
+        MakeVectorsOrthoOnTheirPlane(Result, Grav);
+      end;
+
+    var
       Angle, AngleRotate: Single;
     begin
+      Grav := GravityUpLocal;
+
       Result := FFallingOnTheGround;
       if not Result then
         Exit;
 
-      Angle := AngleRadBetweenVectors(Camera.Up, Camera.GravityUp);
-
+      Angle := AngleRadBetweenVectors(Camera.Up, Grav);
       if SameValue(Angle, HalfPi, 0.01) then
       begin
         { FallingOnTheGround effect stops here. }
@@ -3448,12 +3614,16 @@ procedure TCastleWalkNavigation.Update(const SecondsPassed: Single;
         Exit;
       end;
 
+      { Our DirInGravityPlane doesn't work when Camera.Direction and Grav are parallel }
+      if VectorsParallel(Camera.Direction, Grav) then
+        Exit;
+
       AngleRotate := SecondsPassed * 5;
       MinVar(AngleRotate, Abs(Angle - HalfPi));
       if not FFallingOnTheGroundAngleIncrease then
         AngleRotate := -AngleRotate;
 
-      Camera.Up := RotatePointAroundAxisRad(AngleRotate, Camera.Up, DirectionInGravityPlane);
+      Camera.Up := RotatePointAroundAxisRad(AngleRotate, Camera.Up, DirInGravityPlane);
     end;
 
     procedure DoFall;
@@ -3464,14 +3634,14 @@ procedure TCastleWalkNavigation.Update(const SecondsPassed: Single;
       begin
         { Project Position and FFallingStartPosition
           onto GravityUp vector to calculate fall height. }
-        BeginPos := PointOnLineClosestToPoint(TVector3.Zero, Camera.GravityUp, FFallingStartPosition);
-        EndPos   := PointOnLineClosestToPoint(TVector3.Zero, Camera.GravityUp, Camera.Translation);
+        BeginPos := PointOnLineClosestToPoint(TVector3.Zero, GravityUpLocal, FFallingStartPosition);
+        EndPos   := PointOnLineClosestToPoint(TVector3.Zero, GravityUpLocal, Camera.Translation);
         FallVector := BeginPos - EndPos;
 
         { Because of various growing and jumping effects (imagine you jump up
           onto a taller pillar) it may turn out that we're higher at the end
           at the end of fall. Do not report it to OnFall event in this case. }
-        if TVector3.DotProduct(Camera.GravityUp, FallVector.Normalize) <= 0 then
+        if TVector3.DotProduct(GravityUpLocal, FallVector.Normalize) <= 0 then
           Exit;
 
         OnFall(Self, FallVector.Length);
@@ -3535,7 +3705,7 @@ procedure TCastleWalkNavigation.Update(const SecondsPassed: Single;
     if Gravity then
     begin
       { update IsAbove, AboveHeight }
-      Height(Camera.Translation, FIsAbove, FAboveHeight, FAboveGround);
+      Height(Camera.WorldTranslation, FIsAbove, FAboveHeight, FAboveGround);
 
       FIsOnTheGround := GetIsOnTheGround;
       FIsWalkingOnTheGround := MoveHorizontalDone and FIsOnTheGround;
@@ -3670,9 +3840,9 @@ procedure TCastleWalkNavigation.Update(const SecondsPassed: Single;
     if buttonLeft in Container.MousePressed then
     begin
       if Delta.Y < -Tolerance then
-        MoveHorizontal(-MoveSizeY * SecondsPassed, 1); { forward }
+        MoveHorizontal( Camera.Direction, -MoveSizeY * SecondsPassed); // forward
       if Delta.Y > Tolerance then
-        MoveHorizontal(-MoveSizeY * SecondsPassed, -1); { backward }
+        MoveHorizontal(-Camera.Direction, -MoveSizeY * SecondsPassed); // backward
 
       if Abs(Delta.X) > Tolerance then
         RotateHorizontal(-Delta.X * SecondsPassed * MouseDraggingHorizontalRotationSpeed); { rotate }
@@ -3680,17 +3850,9 @@ procedure TCastleWalkNavigation.Update(const SecondsPassed: Single;
     else if buttonRight in Container.MousePressed then
     begin
       if Delta.X < -Tolerance then
-      begin
-        RotateHorizontalForStrafeMove(HalfPi);
-        MoveHorizontal(MoveSizeX * SecondsPassed, 1);  { strife left }
-        RotateHorizontalForStrafeMove(-HalfPi);
-      end;
+        MoveHorizontal(DirectionLeft, MoveSizeX * SecondsPassed);
       if Delta.X > Tolerance then
-      begin
-        RotateHorizontalForStrafeMove(-HalfPi);
-        MoveHorizontal(MoveSizeX * SecondsPassed, 1);  { strife right }
-        RotateHorizontalForStrafeMove(HalfPi);
-      end;
+        MoveHorizontal(DirectionRight, MoveSizeX * SecondsPassed);
 
       if Delta.Y < -5 then
         MoveVertical(-MoveSizeY * SecondsPassed, 1);    { fly up }
@@ -3722,7 +3884,7 @@ begin
   begin
     if niNormal in UsingInput then
     begin
-      HandleInput := not ExclusiveEvents;
+      HandleInput := false;
       FIsCrouching := Gravity and Input_Crouch.IsPressed(Container);
 
       if (not CheckModsDown) or
@@ -3731,23 +3893,13 @@ begin
         CheckRotates(1.0);
 
         if Input_Forward.IsPressed(Container) or MoveForward then
-          MoveHorizontal(SecondsPassed, 1);
+          MoveHorizontal( Camera.Direction, SecondsPassed);
         if Input_Backward.IsPressed(Container) or MoveBackward then
-          MoveHorizontal(SecondsPassed, -1);
-
+          MoveHorizontal(-Camera.Direction, SecondsPassed);
         if Input_RightStrafe.IsPressed(Container) then
-        begin
-          RotateHorizontalForStrafeMove(-HalfPi);
-          MoveHorizontal(SecondsPassed, 1);
-          RotateHorizontalForStrafeMove(HalfPi);
-        end;
-
+          MoveHorizontal(DirectionRight, SecondsPassed);
         if Input_LeftStrafe.IsPressed(Container) then
-        begin
-          RotateHorizontalForStrafeMove(HalfPi);
-          MoveHorizontal(SecondsPassed, 1);
-          RotateHorizontalForStrafeMove(-HalfPi);
-        end;
+          MoveHorizontal(DirectionLeft , SecondsPassed);
 
         { A simple implementation of Input_Jump was
             RotateVertical(HalfPi); Move(MoveVerticalSpeed * MoveSpeed * SecondsPassed); RotateVertical(-HalfPi)
@@ -3788,7 +3940,7 @@ begin
        (Container.Pressed.Modifiers - Input_Run.Modifiers = []) and
        (MouseDragMode = mdWalk) then
     begin
-      HandleInput := not ExclusiveEvents;
+      HandleInput := false;
       MoveViaMouseDragging(Container.MousePosition - MouseDraggingStart);
     end;
   end;
@@ -3821,7 +3973,7 @@ begin
     to be able to jump. }
 
   { update IsAbove, AboveHeight }
-  Height(Camera.Translation, FIsAbove, FAboveHeight, FAboveGround);
+  Height(Camera.WorldTranslation, FIsAbove, FAboveHeight, FAboveGround);
 
   if AboveHeight > RealPreferredHeight + RealPreferredHeightMargin then
     Exit;
@@ -3865,9 +4017,61 @@ function TCastleWalkNavigation.Press(const Event: TInputPressRelease): boolean;
     Camera.SetWorldView(OldPosition, NewDirection, NewUp, false);
   end;
 
-const
-  MouseWheelScrollSpeed = Pi * 3 / 180.0;
-  PretendSecondsPassed = 1 / 30;
+  procedure HandleMouseWheelPress;
+  const
+    PretendSecondsPassed = 1 / 30;
+  var
+    RotationsSpeedScale: Single;
+  begin
+    { Inputs below are handled also in TCastleWalkNavigation.Update.
+      But the mouse wheel is never in a pressed state, so it cannot be handled in Update.
+      So we handle pressing on mouse wheel in a special way here.
+
+      TODO: A more generic mechanism for handling mouse wheel would be nice, so we don't
+      need to double handling of everything for mouse wheel?  }
+
+    if Input_MoveSpeedInc.IsEvent(Event) then
+    begin
+      MoveSpeedInc(PretendSecondsPassed);
+      Result := true;
+    end;
+
+    if Input_MoveSpeedDec.IsEvent(Event) then
+    begin
+      MoveSpeedDec(PretendSecondsPassed);
+      Result := true;
+    end;
+
+    if Container.Pressed.Modifiers = [mkCtrl] then
+      RotationsSpeedScale := 0.1
+    else
+      RotationsSpeedScale := 1.0;
+
+    if Input_RightRotate.IsEvent(Event) then
+    begin
+      RotateHorizontal(-RotationHorizontalSpeed * PretendSecondsPassed * RotationsSpeedScale);
+      Result := true;
+    end;
+
+    if Input_LeftRotate.IsEvent(Event) then
+    begin
+      RotateHorizontal(+RotationHorizontalSpeed * PretendSecondsPassed * RotationsSpeedScale);
+      Result := true;
+    end;
+
+    if Input_UpRotate.IsEvent(Event) then
+    begin
+      RotateVertical(+RotationVerticalSpeed * PretendSecondsPassed * RotationsSpeedScale);
+      Result := true;
+    end;
+
+    if Input_DownRotate.IsEvent(Event) then
+    begin
+      RotateVertical(-RotationVerticalSpeed * PretendSecondsPassed * RotationsSpeedScale);
+      Result := true;
+    end;
+  end;
+
 begin
   Result := inherited;
   if Result then Exit;
@@ -3886,16 +4090,6 @@ begin
     Exit;
   end;
 
-  if (Event.EventType = itMouseWheel) and
-     ReallyEnableMouseDragging and
-     (MouseDragMode <> mdRotate) and
-     Event.MouseWheelVertical then
-  begin
-    RotateVertical(-Event.MouseWheelScroll * MouseWheelScrollSpeed);
-    Result := true;
-    Exit;
-  end;
-
   if (not (niNormal in UsingInput)) or
      (not Valid) then
     Exit(false);
@@ -3903,28 +4097,17 @@ begin
   if Input_GravityUp.IsEvent(Event) then
   begin
     SetUpToGravityUp;
-    Result := Result and ExclusiveEvents;
+    Result := true;
   end;
 
   if Input_Jump.IsEvent(Event) then
   begin
-    Result := Jump and Result and ExclusiveEvents;
+    if Jump then
+      Result := true;
   end;
 
-  { Input_MoveSpeedInc/Dec are handled in Update, usually.
-    But the mouse wheel is never is pressed state, so it cannot be handled in Update
-    -- we handle it here. }
-  if Input_MoveSpeedInc.IsEvent(Event) and (Event.EventType = itMouseWheel) then
-  begin
-    MoveSpeedInc(PretendSecondsPassed);
-    Result := Result and ExclusiveEvents;
-  end;
-
-  if Input_MoveSpeedDec.IsEvent(Event) and (Event.EventType = itMouseWheel) then
-  begin
-    MoveSpeedDec(PretendSecondsPassed);
-    Result := Result and ExclusiveEvents;
-  end;
+  if Event.EventType = itMouseWheel then
+    HandleMouseWheelPress;
 end;
 
 procedure TCastleWalkNavigation.MoveSpeedInc(const SecondsPassed: Single);
@@ -3959,22 +4142,14 @@ begin
   MoveSize := Length * SecondsPassed / 5000;
 
   if Z > 5 then
-    MoveHorizontal(Z * MoveSize, -1); { backward }
+    MoveHorizontal(-Camera.Direction, Z * MoveSize); { backward }
   if Z < -5 then
-    MoveHorizontal(-Z * MoveSize, 1); { forward }
+    MoveHorizontal( Camera.Direction, -Z * MoveSize); { forward }
 
   if X > 5 then
-  begin
-    RotateHorizontalForStrafeMove(-HalfPi);
-    MoveHorizontal(X * MoveSize, 1);  { right }
-    RotateHorizontalForStrafeMove(HalfPi);
-  end;
+    MoveHorizontal(DirectionRight, X * MoveSize);  { right }
   if X < -5 then
-  begin
-    RotateHorizontalForStrafeMove(HalfPi);
-    MoveHorizontal(-X * MoveSize, 1); { left }
-    RotateHorizontalForStrafeMove(-HalfPi);
-  end;
+    MoveHorizontal(DirectionLeft, -X * MoveSize); { left }
 
   if Y > 5 then
     MoveVertical(Y * MoveSize, 1);    { up }
@@ -4060,12 +4235,23 @@ begin
   Result := JumpMaxHeight * PreferredHeight;
 end;
 
-function TCastleWalkNavigation.DirectionInGravityPlane: TVector3;
+function TCastleWalkNavigation.GravityUpLocal: TVector3;
 begin
-  Result := Camera.Direction;
+  if (Camera.Parent <> nil) and
+     (Camera.World <> nil) then
+    Result := Camera.Parent.WorldToLocalDirection(Camera.GravityUp).Normalize
+  else
+    Result := Camera.GravityUp;
+end;
 
-  if not VectorsParallel(Result, Camera.GravityUp) then
-    MakeVectorsOrthoOnTheirPlane(Result, Camera.GravityUp);
+function TCastleWalkNavigation.DirectionLeft: TVector3;
+begin
+  Result := TVector3.CrossProduct(Camera.Up, Camera.Direction);
+end;
+
+function TCastleWalkNavigation.DirectionRight: TVector3;
+begin
+  Result := TVector3.CrossProduct(Camera.Direction, Camera.Up);
 end;
 
 procedure TCastleWalkNavigation.FallOnTheGround;
@@ -4123,30 +4309,20 @@ begin
     (not InternalUsingMouseLook) then
   begin
     HandleMouseDrag;
-    Result := ExclusiveEvents;
+    Result := true;
   end;
 end;
 
 function TCastleWalkNavigation.PropertySections(
   const PropertyName: String): TPropertySections;
 begin
-  if (PropertyName = 'Gravity') or
-     (PropertyName = 'MoveSpeed') or
-     (PropertyName = 'Radius') or
-     (PropertyName = 'CrouchHeight') or
-     (PropertyName = 'PreferredHeight') or
-     (PropertyName = 'MoveHorizontalSpeed') or
-     (PropertyName = 'MoveVerticalSpeed') or
-     (PropertyName = 'MouseDraggingHorizontalRotationSpeed' ) or
-     (PropertyName = 'MouseDraggingVerticalRotationSpeed' ) or
-     (PropertyName = 'MouseDraggingMoveSpeed') or
-     (PropertyName = 'MouseDragMode') or
-     (PropertyName = 'RotationHorizontalSpeed') or
-     (PropertyName = 'RotationVerticalSpeed') or
-     (PropertyName = 'MouseLook') or
-     (PropertyName = 'MouseLookHorizontalSensitivity') or
-     (PropertyName = 'MouseLookVerticalSensitivity') or
-     (PropertyName = 'InvertVerticalMouseLook') then
+  if ArrayContainsString(PropertyName, [
+       'Gravity', 'MoveSpeed', 'Radius', 'CrouchHeight', 'PreferredHeight',
+       'MoveHorizontalSpeed', 'MoveVerticalSpeed',
+       'MouseDraggingHorizontalRotationSpeed', 'MouseDraggingVerticalRotationSpeed',
+       'MouseDraggingMoveSpeed', 'MouseDragMode', 'RotationHorizontalSpeed',
+       'RotationVerticalSpeed'
+     ]) then
     Result := [psBasic]
   else
     Result := inherited PropertySections(PropertyName);
@@ -4155,6 +4331,17 @@ end;
 class procedure TCastleWalkNavigation.CreateComponentFly(Sender: TObject);
 begin
   (Sender as TCastleWalkNavigation).Gravity := false;
+end;
+
+function TCastleWalkNavigation.DirectionInGravityPlane: TVector3;
+var
+  Grav: TVector3;
+begin
+  Result := Camera.Direction;
+
+  Grav := GravityUpLocal;
+  if not VectorsParallel(Result, Grav) then
+    MakeVectorsOrthoOnTheirPlane(Result, Grav);
 end;
 
 { global ------------------------------------------------------------ }
@@ -4184,11 +4371,11 @@ var
 initialization
   R := TRegisteredComponent.Create;
   R.ComponentClass := TCastleWalkNavigation;
-  R.Caption := 'Navigation/Fly (Walk with Gravity=false)';
-  R.OnCreate := {$ifdef FPC}@{$endif}TCastleWalkNavigation{$ifdef FPC}(nil){$endif}.CreateComponentFly;
+  R.Caption := ['Navigation', 'Fly (Walk with Gravity=false)'];
+  R.OnCreate := {$ifdef FPC}@{$endif}TCastleWalkNavigation.CreateComponentFly;
   RegisterSerializableComponent(R);
 
-  RegisterSerializableComponent(TCastleWalkNavigation, 'Navigation/Walk');
-  RegisterSerializableComponent(TCastleExamineNavigation, 'Navigation/Examine');
-  RegisterSerializableComponent(TCastle2DNavigation, 'Navigation/2D');
+  RegisterSerializableComponent(TCastleWalkNavigation, ['Navigation', 'Walk']);
+  RegisterSerializableComponent(TCastleExamineNavigation, ['Navigation', 'Examine']);
+  RegisterSerializableComponent(TCastle2DNavigation, ['Navigation', '2D']);
 end.

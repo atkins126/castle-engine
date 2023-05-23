@@ -1,5 +1,5 @@
 {
-  Copyright 2009-2022 Michalis Kamburelis.
+  Copyright 2009-2023 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -192,7 +192,11 @@ type
 
     function GetNavigation: TCastleNavigation;
     procedure SetNavigation(const Value: TCastleNavigation);
+
+    { Cast a ray that can collide with whole world (except AvoidNavigationCollisions).
+      Given parameters are in world coordinates. }
     function CameraRayCollision(const RayOrigin, RayDirection: TVector3): TRayCollision;
+
     procedure SetSceneManager(const Value: TCastleSceneManager);
     { Get current Container.MousePosition.
       Secured in case Container not assigned (returns @false)
@@ -281,10 +285,10 @@ type
       so you can do shadow volumes culling. }
     procedure RenderShadowVolume(const Params: TRenderParams);
 
-    { Detect position/direction of the main light that produces shadows.
-      Looks at MainScene.InternalMainLightForShadows.
+    { Detect position/direction of the main light that produces shadow volumes.
+      Looks at MainScene.InternalMainLightForShadowVolumes.
       Returns light position (or direction, if W = 0) in world space. }
-    function MainLightForShadows(out AMainLightPosition: TVector4): boolean;
+    function MainLightForShadowVolumes(out AMainLightPosition: TVector4): boolean;
 
     { Pass pointing device (mouse or touch) press event
       to TCastleTransform instances in @link(Items).
@@ -692,8 +696,7 @@ type
 
     { Convert 2D position on the viewport into 3D ray.
 
-      The interpretation of Position depends on ContainerCoordinates,
-      and is similar to e.g. @link(TCastleTiledMapControl.PositionToTile):
+      The interpretation of Position depends on ContainerCoordinates:
 
       @unorderedList(
         @item(When ContainerCoordinates = @true,
@@ -719,18 +722,21 @@ type
       const ContainerCoordinates: Boolean; out RayOrigin, RayDirection: TVector3);
 
     { Convert 2D position on the viewport into 3D "world coordinates",
-      by colliding camera ray with a plane at constant Z.
+      by colliding camera ray with a plane at constant X, Y or Z.
       "World coordinates" are coordinates
       space seen by TCastleTransform / TCastleScene inside viewport @link(Items).
 
-      This is a more general version of @link(PositionTo2DWorld),
-      that works with any projection (perspective or orthographic).
-      This is often useful if your game is "close to 2D", which means that you
-      use 3D (and maybe even perspective camera),
-      but most of the game world is placed around some plane with constant Z.
+      This works with any projection (perspective or orthographic).
 
-      The interpretation of Position depends on ContainerCoordinates,
-      and is similar to e.g. @link(TCastleTiledMapControl.PositionToTile):
+      You can use it to pick a point on any plane with constant X (PlaneConstCoord = 0),
+      constant Y (PlaneConstCoord = 1), constant Z (PlaneConstCoord = 2).
+
+      This intersects the ray cast by @link(Camera) with a plane where given coordinate (PlaneConstCoord)
+      has value equal to PlaneConstValue.
+      The parameter names and interpretation is consistent e.g. with
+      @link(TrySimplePlaneRayIntersection).
+
+      The interpretation of Position depends on ContainerCoordinates:
 
       @unorderedList(
         @item(When ContainerCoordinates = @true,
@@ -752,24 +758,27 @@ type
         )
       )
 
-      This intersects the ray cast by @link(Camera)
-      with a plane at Z = PlaneZ.
-
-      Returns true and sets 3D PlanePosition (the Z component of this vector
-      must always be equal to PlaneZ) if such intersection is found.
+      Returns true and sets 3D PlanePosition (the PlaneConstCoord component of this vector
+      must always be equal to PlaneConstValue) if such intersection is found.
       Returns false if it's not possible to determine such point (when
       the camera looks in the other direction).
     }
     function PositionToWorldPlane(const Position: TVector2;
       const ContainerCoordinates: Boolean;
-      const PlaneZ: Single; out PlanePosition: TVector3): Boolean;
+      const PlaneConstCoord: T3DAxis; const PlaneConstValue: Single;
+      out PlanePosition: TVector3): Boolean; overload;
+
+    function PositionToWorldPlane(const Position: TVector2;
+      const ContainerCoordinates: Boolean;
+      const PlaneConstValue: Single;
+      out PlanePosition: TVector3): Boolean; overload;
+      deprecated 'use PositionToWorldPlane overload with PlaneConstCoord parameter; this version assumes PlaneConstCoord = 2';
 
     { Convert 2D position into "world coordinates", which is the coordinate
       space seen by TCastleTransform / TCastleScene inside viewport @link(Items),
       assuming that we use orthographic projection in XY axes.
 
-      The interpretation of Position depends on ContainerCoordinates,
-      and is similar to e.g. @link(TCastleTiledMapControl.PositionToTile):
+      The interpretation of Position depends on ContainerCoordinates:
 
       @unorderedList(
         @item(When ContainerCoordinates = @true,
@@ -823,13 +832,19 @@ type
       This is like using ContainerCoordinates = @false with PositionToRay. }
     function PositionFromWorld(const WorldPosition: TVector3): TVector2;
 
+    procedure PrepareResources(const DisplayProgressTitle: string;
+      const Options: TPrepareResourcesOptions = DefaultPrepareOptions); overload;
+      deprecated 'use overload without DisplayProgressTitle: String';
+    procedure PrepareResources(const Item: TCastleTransform;
+      const DisplayProgressTitle: string;
+      Options: TPrepareResourcesOptions = DefaultPrepareOptions); overload;
+      deprecated 'use overload without DisplayProgressTitle: String';
+
     { Prepare resources, to make various methods (like @link(Render)) execute fast.
-      Call it only when rendering context is initialized (ApplicationProperties.IsGLContextOpen).
-      If DisplayProgressTitle <> '', we will display progress bar during loading. }
-    procedure PrepareResources(const DisplayProgressTitle: string = '';
+      Call it only when rendering context is initialized (ApplicationProperties.IsGLContextOpen). }
+    procedure PrepareResources(
       const Options: TPrepareResourcesOptions = DefaultPrepareOptions); overload;
     procedure PrepareResources(const Item: TCastleTransform;
-      const DisplayProgressTitle: string = '';
       Options: TPrepareResourcesOptions = DefaultPrepareOptions); overload; virtual;
 
     { Current object (TCastleTransform hierarchy) under the mouse cursor.
@@ -842,6 +857,13 @@ type
     property MouseRayHit: TRayCollision read FMouseRayHit;
 
     { Current object (TCastleTransform instance) under the mouse cursor.
+
+      This corresponds to the first @italic(not hidden) instance on the MouseRayHit list.
+      This makes the behavior most intuitive: it returns the TCastleTransform
+      instance you have explicitly created, like TCastleScene, TCastlePlane or TCastleImageTransform.
+      It will not return hidden (with csTransient flag) scenes that are internal
+      e.g. inside TCastlePlane or TCastleImageTransform.
+
       Updated in every mouse move. May be @nil. }
     function TransformUnderMouse: TCastleTransform;
 
@@ -899,14 +921,18 @@ type
       Or you can leave it as @nil. }
     property Navigation: TCastleNavigation read GetNavigation write SetNavigation
       stored false;
-      {$ifdef FPC}deprecated 'no need to set this, instead add TCastleNavigation like "MyViewport.InsertBack(MyNavigation)"';{$endif}
+      {$ifdef FPC}deprecated 'instead of this property: to get, just remember current navigation instance on your side; to set, add it like "MyViewport.InsertBack(MyNavigation)"';{$endif}
 
-    { Check collisions with @link(Items) for TCastleNavigation. @exclude }
+    { Check collisions (for move) with whole world (except AvoidNavigationCollisions).
+      Given parameters are in world coordinates.
+      @exclude }
     function InternalNavigationMoveAllowed(const Sender: TCastleNavigation;
       const OldPos, ProposedNewPos: TVector3; out NewPos: TVector3;
       const Radius: Single; const BecauseOfGravity: Boolean): Boolean;
 
-    { Check collisions with @link(Items) for TCastleNavigation. @exclude }
+    { Check collisions (to query height) with whole world (except AvoidNavigationCollisions).
+      Given parameters are in world coordinates.
+      @exclude }
     function InternalNavigationHeight(const Sender: TCastleNavigation;
       const Position: TVector3;
       out AboveHeight: Single; out AboveGround: PTriangle): Boolean;
@@ -1148,7 +1174,7 @@ type
   private
     SceneManager: TCastleSceneManager;
   protected
-    procedure Notify({$ifdef FPC}constref{$else}const{$endif} Value: TCastleViewport;
+    procedure Notify({$ifdef GENERICS_CONSTREF}constref{$else}const{$endif} Value: TCastleViewport;
       Action: TCollectionNotification); override;
   end deprecated 'internal for TCastleSceneManager';
 
@@ -1174,10 +1200,10 @@ var
 implementation
 
 uses DOM, Math, TypInfo,
-  CastleGLUtils, CastleProgress, CastleLog, CastleStringUtils,
+  CastleGLUtils, CastleLog, CastleStringUtils,
   CastleSoundEngine, CastleGLVersion, CastleShapes, CastleTextureImages,
-  CastleInternalSettings, CastleXMLUtils, CastleURIUtils,
-  CastleRenderContext, CastleApplicationProperties, X3DLoad;
+  CastleInternalSettings, CastleXMLUtils, CastleURIUtils, CastleInternalRenderer,
+  CastleRenderContext, CastleApplicationProperties, X3DLoad, CastleInternalGLUtils;
 
 {$define read_implementation}
 {$I castleviewport_autonavigation.inc}
@@ -1358,7 +1384,8 @@ begin
     InsertControl(0, FInternalDesignNavigations[dn2D]);
 
     FGizmoGridAxis := TInternalCastleEditorGizmo.Create(Self);
-    FGizmoGridAxis.LoadVisualization(LoadNode(InternalCastleDesignData + 'gizmos/grid_axis/grid_axis.gltf'));
+    if InternalCastleDesignData <> '' then
+      FGizmoGridAxis.LoadVisualization(LoadNode(InternalCastleDesignData + 'gizmos/grid_axis/grid_axis.gltf'));
     FGizmoGridAxis.Exists := InternalGridAxis;
     { Note: This will not work (Gizmo state and our property InternalGridAxis
       will become desynchronized) if Items are shared across other viewports.
@@ -1446,7 +1473,7 @@ begin
     - remove (and eventually free),
     - rename,
     - see in editor (e.g. in dropdown Viewport.Camera),
-    - access at runtime using TUIState.DesignedComponent }
+    - access at runtime using TCastleView.DesignedComponent }
 
   Assert(Owner <> nil); // Use SetupDesignTimeCamera only on viewports with owner
 
@@ -1778,13 +1805,13 @@ begin
     // use downto, to work in case some Press will remove transform from list
     for I := Items.InternalPressReleaseListeners.Count - 1 downto 0 do
       if Items.InternalPressReleaseListeners[I].Press(Event) then
-        Exit(ExclusiveEvents);
+        Exit(true);
 
   if Input_Interact.IsEvent(Event) and
      PointingDevicePress then
   begin
     InternalPointingDeviceDragging := true;
-    Exit(ExclusiveEvents);
+    Exit(true);
   end;
 end;
 
@@ -1802,13 +1829,13 @@ begin
     // use downto, to work in case some Release will remove transform from list
     for I := Items.InternalPressReleaseListeners.Count - 1 downto 0 do
       if Items.InternalPressReleaseListeners[I].Release(Event) then
-        Exit(ExclusiveEvents);
+        Exit(true);
 
   if Input_Interact.IsEvent(Event) then
   begin
     InternalPointingDeviceDragging := false;
     if PointingDeviceRelease then
-      Exit(ExclusiveEvents);
+      Exit(true);
   end;
 end;
 
@@ -1921,12 +1948,19 @@ begin
 end;
 
 function TCastleViewport.TransformUnderMouse: TCastleTransform;
+var
+  I: Integer;
 begin
-  if (MouseRayHit <> nil) and
-     (MouseRayHit.Count <> 0) then
-    Result := MouseRayHit.First.Item
-  else
-    Result := nil;
+  if MouseRayHit <> nil then
+    for I := 0 to MouseRayHit.Count - 1 do
+    begin
+      Result := MouseRayHit[I].Item;
+      if not (csTransient in Result.ComponentStyle) then
+        Exit;
+    end;
+
+  // Return nil if all items on MouseRayHit list are csTransient, or MouseRayHit = nil
+  Result := nil;
 end;
 
 procedure TCastleViewport.RecalculateCursor(Sender: TObject);
@@ -2225,34 +2259,59 @@ begin
     InternalCamera = InternalDesignCamera);
 end;
 
-function TCastleViewport.MainLightForShadows(out AMainLightPosition: TVector4): boolean;
+function TCastleViewport.MainLightForShadowVolumes(out AMainLightPosition: TVector4): boolean;
+
+  { Check does scene define light for shadow volumes,
+    if yes - calculate the position/direction of it in world space to AMainLightPosition
+    and return @true.
+
+    May modify AMainLightPosition even when returns @false, the value AMainLightPosition
+    is undefined after returning @false. }
+  function LightForShadowVolumesFromScene(const Scene: TCastleScene;
+    out AMainLightPosition: TVector4): Boolean;
+  begin
+    Result :=
+      Scene.InternalMainLightForShadowVolumes(AMainLightPosition) and
+      { We need WorldTransform for below conversion local<->world space.
+        It may not be available, if
+        - Scene is present multiple times in Items
+        - Scene is not present in Items at all, temporarily, but is still a MainScene.
+          Testcase: castle-game, change from level to level using debug menu.
+      }
+      Scene.HasWorldTransform;
+    { Transform AMainLightPosition to world space. }
+    if Result then
+    begin
+      if AMainLightPosition.W = 0 then
+        AMainLightPosition.XYZ := Scene.LocalToWorldDirection(AMainLightPosition.XYZ)
+      else
+        AMainLightPosition := Vector4(
+          Scene.LocalToWorld(AMainLightPosition.XYZ / AMainLightPosition.W), 1.0);
+    end;
+  end;
+
 var
-  AMainLightPosition3D: PVector3;
+  SceneCastingLights: TCastleScene;
 begin
+  Result := false;
+
   {$warnings off} // using deprecated MainScene to keep it working
   if Items.MainScene <> nil then
   begin
-    Result :=
-      Items.MainScene.InternalMainLightForShadows(AMainLightPosition) and
-      { We need WorldTransform for below conversion local<->world space.
-        It may not be available, if
-        - MainScene is present multiple times in Items
-        - MainScene is not present in Items at all, temporarily, but is still a MainScene.
-        Testcase: castle-game, change from level to level using debug menu.
-      }
-      Items.MainScene.HasWorldTransform;
-    { Transform AMainLightPosition to world space.
-      This matters in case MainScene (that contains shadow-casting light) has some transformation. }
+    Result := LightForShadowVolumesFromScene(Items.MainScene, AMainLightPosition);
     if Result then
-    begin
-      AMainLightPosition3D := PVector3(@AMainLightPosition);
-      if AMainLightPosition.W = 0 then
-        AMainLightPosition3D^ := Items.MainScene.LocalToWorldDirection(AMainLightPosition3D^)
-      else
-        AMainLightPosition3D^ := Items.MainScene.LocalToWorld(AMainLightPosition3D^);
-    end;
-  end else
-    Result := false;
+      Exit;
+  end;
+
+  { scan InternalScenesCastGlobalLights }
+  if Items.InternalScenesCastGlobalLights <> nil then
+    for SceneCastingLights in Items.InternalScenesCastGlobalLights do
+      if Items.MainScene <> SceneCastingLights then // MainScene is already accounted for above
+      begin
+        Result := LightForShadowVolumesFromScene(SceneCastingLights, AMainLightPosition);
+        if Result then
+          Exit;
+      end;
   {$warnings on}
 end;
 
@@ -2262,12 +2321,16 @@ end;
 
 procedure TCastleViewport.RenderOnePass(const Params: TRenderParams);
 begin
+  TGLRenderer.ViewportRenderBegin;
+
   {$warnings off} // keep deprecated working
   Render3D(Params);
   {$warnings on}
 
   Params.Frustum := @Params.RenderingCamera.Frustum;
   Items.Render(Params);
+
+  TGLRenderer.ViewportRenderEnd;
 end;
 
 procedure TCastleViewport.RenderShadowVolume(const Params: TRenderParams);
@@ -2392,7 +2455,7 @@ end;
 
 procedure TCastleViewport.RenderFromView3D(const Params: TRenderParams);
 
-  procedure RenderNoShadows;
+  procedure RenderNoShadowVolumes;
   begin
     { We must first render all non-transparent objects,
       then all transparent objects. Otherwise transparent objects
@@ -2406,17 +2469,26 @@ procedure TCastleViewport.RenderFromView3D(const Params: TRenderParams);
     Params.Transparent := true ; Params.ShadowVolumesReceivers := [false, true]; RenderOnePass(Params);
   end;
 
-  procedure RenderWithShadows(const MainLightPosition: TVector4);
+  procedure RenderWithShadowVolumes(const MainLightPosition: TVector4);
   begin
     if (FProjection.ProjectionFar <> ZFarInfinity) and (not FWarningZFarInfinityDone) then
     begin
       FWarningZFarInfinityDone := true;
       WritelnWarning('Rendering with Shadow Volumes, but ProjectionFar is not ZFarInfinity. Shadow volumes require ProjectionFar = ZFarInfinity. Leave TCastleCamera.ProjectionFar = 0.');
     end;
+
+    { Initialize FShadowVolumeRenderer if needed, along with its OpenGL resources.
+      This way we never even create FShadowVolumeRenderer if we will never render with shadow volumes. }
+    if FShadowVolumeRenderer = nil then
+    begin
+      FShadowVolumeRenderer := TGLShadowVolumeRenderer.Create;
+      FShadowVolumeRenderer.PrepareRenderingResources;
+    end;
+    FShadowVolumeRenderer.DebugRender := ShadowVolumesRender;
     FShadowVolumeRenderer.InitFrustumAndLight(Params.RenderingCamera.Frustum, MainLightPosition);
     FShadowVolumeRenderer.Render(Params,
       {$ifdef FPC}@{$endif}RenderOnePass,
-      {$ifdef FPC}@{$endif}RenderShadowVolume, ShadowVolumesRender);
+      {$ifdef FPC}@{$endif}RenderShadowVolume);
   end;
 
 var
@@ -2424,10 +2496,10 @@ var
 begin
   if GLFeatures.ShadowVolumesPossible and
      ShadowVolumes and
-     MainLightForShadows(MainLightPosition) then
-    RenderWithShadows(MainLightPosition)
+     MainLightForShadowVolumes(MainLightPosition) then
+    RenderWithShadowVolumes(MainLightPosition)
   else
-    RenderNoShadows;
+    RenderNoShadowVolumes;
 end;
 
 procedure TCastleViewport.RenderFromViewEverything(const RenderingCamera: TRenderingCamera);
@@ -2475,7 +2547,7 @@ procedure TCastleViewport.RenderFromViewEverything(const RenderingCamera: TRende
 
     if GLFeatures.ShadowVolumesPossible and
        ShadowVolumes and
-       MainLightForShadows(MainLightPosition) then
+       MainLightForShadowVolumes(MainLightPosition) then
       Include(ClearBuffers, cbStencil);
 
     RenderContext.Clear(ClearBuffers, ClearColor);
@@ -2523,7 +2595,7 @@ procedure TCastleViewport.RenderFromViewEverything(const RenderingCamera: TRende
     for J := 0 to SceneCastingLights.InternalGlobalLights.Count - 1 do
     begin
       NewGlobalLight := PLightInstance(FRenderParams.FGlobalLights.Add);
-      NewGlobalLight^ := SceneCastingLights.InternalGlobalLights.List^[J];
+      NewGlobalLight^ := SceneCastingLights.InternalGlobalLights.L[J];
       { make NewGlobalLight^ in world coordinates }
       NewGlobalLight^.Transform := SceneCastingLights.WorldTransform * NewGlobalLight^.Transform;
       NewGlobalLight^.TransformScale := Approximate3DScale(SceneCastingLights.WorldTransform) * NewGlobalLight^.TransformScale;
@@ -2584,6 +2656,14 @@ begin
   else
   {$warnings on}
     FRenderParams.GlobalFog := nil;
+
+  if RenderingCamera.Target in [rtShadowMap, rtVarianceShadowMap] then
+    { When rendering shadows maps, we don't modify RenderContext.DepthRange
+      during rendering, it stays drFull. }
+    RenderContext.DepthRange := drFull
+  else
+    { In normal rendering, start with drBack, as this is the meaning of rlParent on Viewport.Items. }
+    RenderContext.DepthRange := drFar;
 
   RenderFromView3D(FRenderParams);
 end;
@@ -2775,7 +2855,7 @@ begin
   // SSAOShaderInitialized = false implies SSAOShader = nil
   Assert(SSAOShader = nil);
 
-  if GLFeatures.Shaders <> gsNone then
+  if GLFeatures.Shaders then
   begin
     try
       SSAOShader := TSSAOScreenEffect.Create;
@@ -2804,7 +2884,7 @@ begin
 
   // SSAOShaderInitialized = false implies SSRShader = nil
   Assert(SSRShader = nil);
-  if GLFeatures.Shaders <> gsNone then
+  if GLFeatures.Shaders then
   begin
     try
       SSRShader := TSSRScreenEffect.Create;
@@ -2827,16 +2907,6 @@ end;
 procedure TCastleViewport.GLContextOpen;
 begin
   inherited;
-
-  { We actually need to do it only if GLFeatures.ShadowVolumesPossible
-    and ShadowVolumes for any viewport.
-    But we can as well do it always, it's harmless (just checks some GL
-    extensions). (Otherwise we'd have to handle SetShadowVolumes.) }
-  if FShadowVolumeRenderer = nil then
-  begin
-    FShadowVolumeRenderer := TGLShadowVolumeRenderer.Create;
-    FShadowVolumeRenderer.GLContextOpen;
-  end;
 end;
 
 procedure TCastleViewport.GLContextClose;
@@ -3004,13 +3074,22 @@ end;
 
 function TCastleViewport.PositionToWorldPlane(const Position: TVector2;
   const ContainerCoordinates: Boolean;
-  const PlaneZ: Single; out PlanePosition: TVector3): Boolean;
+  const PlaneConstValue: Single;
+  out PlanePosition: TVector3): Boolean;
+begin
+  Result := PositionToWorldPlane(Position, ContainerCoordinates,
+    2, PlaneConstValue, PlanePosition);
+end;
+
+function TCastleViewport.PositionToWorldPlane(const Position: TVector2;
+  const ContainerCoordinates: Boolean;
+  const PlaneConstCoord: T3DAxis; const PlaneConstValue: Single;
+  out PlanePosition: TVector3): Boolean;
 var
   RayOrigin, RayDirection: TVector3;
 begin
   PositionToRay(Position, ContainerCoordinates, RayOrigin, RayDirection);
-
-  Result := TrySimplePlaneRayIntersection(PlanePosition, 2, PlaneZ,
+  Result := TrySimplePlaneRayIntersection(PlanePosition, PlaneConstCoord, PlaneConstValue,
     RayOrigin, RayDirection);
 end;
 
@@ -3253,24 +3332,39 @@ begin
   end;
 end;
 
+procedure TCastleViewport.PrepareResources(const DisplayProgressTitle: string;
+  const Options: TPrepareResourcesOptions);
+begin
+  PrepareResources(Options);
+end;
+
 procedure TCastleViewport.PrepareResources(const Item: TCastleTransform;
   const DisplayProgressTitle: string;
+  Options: TPrepareResourcesOptions);
+begin
+  PrepareResources(Item, Options);
+end;
+
+procedure TCastleViewport.PrepareResources(const Item: TCastleTransform;
   Options: TPrepareResourcesOptions);
 var
   MainLightPosition: TVector4; // value of this is ignored
 begin
   if not ApplicationProperties.IsGLContextOpen then
-    raise Exception.Create('PrepareResources can only be called when rendering context is initialized.' + NL +
+  begin
+    WritelnWarning('It is best to call PrepareResources only once rendering context is initialized, to allow preparing all rendering resources.' + NL +
       'Various events and virtual methods can be used to wait for the context:' + NL +
       '- (if you use CastleWindow) Application.OnInitialize' + NL +
-      '- (if you use CastleWindow) TCastleWindow.OnOpen' + NL +
-      '- (if you use LCL CastleControl) TCastleControl.OnOpen' + NL +
-      '- TCastleUserInterface.GLContextOpen'
+      '- TCastleUserInterface.GLContextOpen' + NL +
+      'We will continue, but some rendering resources may need to be prepared on-demand later.'
     );
+    // despite the warning, allow PrepareResources to run, to make it easy for users
+  end;
 
-  if GLFeatures.ShadowVolumesPossible and
+  if (GLFeatures <> nil) and
+     GLFeatures.ShadowVolumesPossible and
      ShadowVolumes and
-     MainLightForShadows(MainLightPosition) then
+     MainLightForShadowVolumes(MainLightPosition) then
     Include(Options, prShadowVolume);
 
   { call TCastleScreenEffects.PrepareResources. }
@@ -3286,20 +3380,13 @@ begin
     ApplyProjection;
   end;
 
-  if DisplayProgressTitle <> '' then
-  begin
-    Progress.Init(Items.PrepareResourcesSteps, DisplayProgressTitle, true);
-    try
-      Item.PrepareResources(Options, true, PrepareParams);
-    finally Progress.Fini end;
-  end else
-    Item.PrepareResources(Options, false, PrepareParams);
+  Item.PrepareResources(Options, PrepareParams);
 end;
 
-procedure TCastleViewport.PrepareResources(const DisplayProgressTitle: string;
+procedure TCastleViewport.PrepareResources(
   const Options: TPrepareResourcesOptions);
 begin
-  PrepareResources(Items, DisplayProgressTitle, Options);
+  PrepareResources(Items, Options);
 end;
 
 procedure TCastleViewport.BeforeRender;
@@ -3641,10 +3728,9 @@ function TCastleViewport.InternalNavigationMoveAllowed(const Sender: TCastleNavi
       (OldPos[GravityCoordinate] < Box.Data[0][GravityCoordinate]);
   end;
 
+var
+  SavedExists: Boolean;
 begin
-  { Both version result in calling WorldMoveAllowed.
-    AvoidNavigationCollisions version adds AvoidNavigationCollisions.Disable/Enable around. }
-
   // take into account PreventInfiniteFallingDown
   if BecauseOfGravity and
      PreventInfiniteFallingDown and
@@ -3652,37 +3738,56 @@ begin
     Exit(false);
 
   if UseAvoidNavigationCollisions then
-    Result := AvoidNavigationCollisions.MoveAllowed(OldPos, ProposedNewPos, NewPos, BecauseOfGravity)
-  else
-    Result := Items.WorldMoveAllowed(OldPos, ProposedNewPos, NewPos, true, Radius,
-      { We prefer to resolve collisions with navigation using sphere.
-        But for TCastleTransform implementations that can't use sphere, we can construct box. }
-      Box3DAroundPoint(OldPos, Radius * 2),
-      Box3DAroundPoint(ProposedNewPos, Radius * 2), BecauseOfGravity);
+  begin
+    SavedExists := AvoidNavigationCollisions.Exists;
+    AvoidNavigationCollisions.Exists := false;
+  end else
+    SavedExists := false; // avoid Delphi warnings about SavedDepthRange uninitialized
+
+  Result := Items.WorldMoveAllowed(OldPos, ProposedNewPos, NewPos, true, Radius,
+    { We prefer to resolve collisions with navigation using sphere.
+      But for TCastleTransform implementations that can't use sphere, we can construct box. }
+    Box3DAroundPoint(OldPos, Radius * 2),
+    Box3DAroundPoint(ProposedNewPos, Radius * 2), BecauseOfGravity);
+
+  if UseAvoidNavigationCollisions then
+    AvoidNavigationCollisions.Exists := SavedExists;
 end;
 
 function TCastleViewport.InternalNavigationHeight(const Sender: TCastleNavigation;
   const Position: TVector3;
   out AboveHeight: Single; out AboveGround: PTriangle): boolean;
+var
+  SavedExists: Boolean;
 begin
-  { Both version result in calling WorldHeight.
-    AvoidNavigationCollisions version adds AvoidNavigationCollisions.Disable/Enable around. }
+  if UseAvoidNavigationCollisions then
+  begin
+    SavedExists := AvoidNavigationCollisions.Exists;
+    AvoidNavigationCollisions.Exists := false;
+  end else
+    SavedExists := false; // avoid Delphi warnings about SavedDepthRange uninitialized
+
+  Result := Items.WorldHeight(Position, AboveHeight, AboveGround);
 
   if UseAvoidNavigationCollisions then
-    Result := AvoidNavigationCollisions.Height(Position, AboveHeight, AboveGround)
-  else
-    Result := Items.WorldHeight(Position, AboveHeight, AboveGround);
+    AvoidNavigationCollisions.Exists := SavedExists;
 end;
 
 function TCastleViewport.CameraRayCollision(const RayOrigin, RayDirection: TVector3): TRayCollision;
+var
+  SavedExists: Boolean;
 begin
-  { Both version result in calling WorldRay.
-    AvoidNavigationCollisions version adds AvoidNavigationCollisions.Disable/Enable around. }
+  if UseAvoidNavigationCollisions then
+  begin
+    SavedExists := AvoidNavigationCollisions.Exists;
+    AvoidNavigationCollisions.Exists := false;
+  end else
+    SavedExists := false; // avoid Delphi warnings about SavedDepthRange uninitialized
+
+  Result := Items.WorldRay(RayOrigin, RayDirection);
 
   if UseAvoidNavigationCollisions then
-    Result := AvoidNavigationCollisions.Ray(RayOrigin, RayDirection)
-  else
-    Result := Items.WorldRay(RayOrigin, RayDirection);
+    AvoidNavigationCollisions.Exists := SavedExists;
 end;
 
 procedure TCastleViewport.BoundViewpointChanged;
@@ -3955,7 +4060,7 @@ end;
 
 { TCastleViewportList -------------------------------------------------- }
 
-procedure TCastleViewportList.Notify({$ifdef FPC}constref{$else}const{$endif} Value: TCastleViewport;
+procedure TCastleViewportList.Notify({$ifdef GENERICS_CONSTREF}constref{$else}const{$endif} Value: TCastleViewport;
   Action: TCollectionNotification);
 begin
   inherited;
@@ -3983,7 +4088,7 @@ initialization
   {$warnings off} // using deprecated, to keep reading it from castle-user-interface working
   R.ComponentClass := TCastleSceneManager;
   {$warnings on}
-  R.Caption := 'Scene Manager';
+  R.Caption := ['Scene Manager'];
   R.IsDeprecated := true;
   RegisterSerializableComponent(R);
 
@@ -3991,14 +4096,14 @@ initialization
 
   R := TRegisteredComponent.Create;
   R.ComponentClass := TCastleViewport;
-  R.Caption := 'Viewport (3D)';
-  R.OnCreate := {$ifdef FPC}@{$endif}TCastleViewport{$ifdef FPC}(nil){$endif}.CreateComponentWithChildren3D;
+  R.Caption := ['Viewport (3D)'];
+  R.OnCreate := {$ifdef FPC}@{$endif}TCastleViewport.CreateComponentWithChildren3D;
   RegisterSerializableComponent(R);
 
   R := TRegisteredComponent.Create;
   R.ComponentClass := TCastleViewport;
-  R.Caption := 'Viewport (2D)';
-  R.OnCreate := {$ifdef FPC}@{$endif}TCastleViewport{$ifdef FPC}(nil){$endif}.CreateComponentWithChildren2D;
+  R.Caption := ['Viewport (2D)'];
+  R.OnCreate := {$ifdef FPC}@{$endif}TCastleViewport.CreateComponentWithChildren2D;
   RegisterSerializableComponent(R);
 
   InitializeWarmupCache;

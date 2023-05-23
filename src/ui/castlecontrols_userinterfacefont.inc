@@ -1,6 +1,6 @@
 {%MainUnit castlecontrols.pas}
 {
-  Copyright 2010-2018 Michalis Kamburelis.
+  Copyright 2010-2023 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -16,11 +16,14 @@
 
 {$ifdef read_interface}
 
+  TCastleImageControl = class;
+
   { Base class for all user interface controls using a font.
     Allows to customize font and font size per-control, or use defaults. }
   TCastleUserInterfaceFont = class(TCastleUserInterface)
   strict private
     FTooltip: string;
+    TooltipLabelContainer: TCastleImageControl;
     TooltipLabel: TCastleLabel;
     FCustomFont: TCastleAbstractFont;
     FOwnsCustomFont: boolean;
@@ -40,12 +43,12 @@
     procedure SetOutlineHighQuality(const Value: boolean);
     procedure CustomFontSizeChanged(Sender: TObject);
   protected
+    procedure InternalSetTooltipExists(const Value: Boolean); override;
     procedure UIScaleChanged; override;
     procedure Notification(AComponent: TComponent; Operation: TOperation); override;
   public
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
-    procedure GLContextClose; override;
     function TooltipExists: boolean; override;
     procedure TooltipRender(const TooltipPosition: TVector2); override;
     procedure Render; override;
@@ -194,55 +197,67 @@ end;
 
 function TCastleUserInterfaceFont.TooltipExists: boolean;
 begin
-  Result := Tooltip <> '';
+  Result := (TooltipControl <> nil) or (Tooltip <> '');
 end;
 
 procedure TCastleUserInterfaceFont.TooltipRender(const TooltipPosition: TVector2);
+const
+  TooltipPadding = 5;
 var
-  X, Y, TooltipWidth, TooltipHeight: Single;
+  TooltipWidth, TooltipHeight: Single;
+  Pos: TVector2;
 begin
-  if TooltipLabel = nil then
+  // do not render tooltip here, if TooltipControl takes care of it
+  if TooltipControl <> nil then
+    Exit;
+  if Container = nil then
+    Exit; // we need Container to work
+
+  if TooltipLabelContainer = nil then
   begin
-    TooltipLabel := TCastleLabelTooltip.Create(nil);
-    TooltipLabel.ImageType := tiTooltip;
-    TooltipLabel.Frame := true;
-    TooltipLabel.InternalSetContainer(Container);
-    { we know that GL context now exists, so just directly call GLContextOpen }
-    TooltipLabel.GLContextOpen;
+    TooltipLabelContainer := TCastleImageControl.Create(Self);
+    TooltipLabelContainer.Content.DrawableImage := Theme.ImagesPersistent[tiTooltip].DrawableImage;
+    TooltipLabelContainer.Content.OwnsDrawableImage := false;
+    TooltipLabelContainer.Content.ProtectedSides.Assign(Theme.ImagesPersistent[tiTooltip].ProtectedSides);
+    TooltipLabelContainer.AutoSizeToChildren := true;
+    TooltipLabelContainer.AutoSizeToChildrenPaddingRight := TooltipPadding;
+    TooltipLabelContainer.AutoSizeToChildrenPaddingTop := TooltipPadding;
+    TooltipLabelContainer.SetTransient; // in case this occurs at design-time
+    Container.Controls.InsertFront(TooltipLabelContainer);
   end;
 
-  { assign TooltipLabel.Text first, to get TooltipRect.Width/Height }
-  TooltipLabel.Padding := 5;
+  if TooltipLabel = nil then
+  begin
+    TooltipLabel := TCastleLabelTooltip.Create(Self);
+    TooltipLabel.Anchor(hpLeft, TooltipPadding);
+    TooltipLabel.Anchor(vpBottom, TooltipPadding);
+    TooltipLabelContainer.InsertFront(TooltipLabel);
+  end;
+
+  { assign TooltipLabel.Text first, to get TooltipLabelContainer.EffectiveXxx later }
   TooltipLabel.Color := Theme.TooltipTextColor;
   TooltipLabel.Text.Clear;
   TooltipLabel.Text.Append(Tooltip);
-  TooltipWidth := 0;
-  TooltipHeight := 0;
-  TCastleLabelTooltip(TooltipLabel).PreferredSize(TooltipWidth, TooltipHeight);
 
-  { divide by TooltipLabel.UIScale because TooltipLabel.Rect will multiply by it }
-  X := TooltipPosition[0] / TooltipLabel.UIScale;
-  Y := TooltipPosition[1] / TooltipLabel.UIScale;
+  TooltipWidth := TooltipLabelContainer.EffectiveWidth;
+  TooltipHeight := TooltipLabelContainer.EffectiveHeight;
+
+  Pos := TooltipPosition;
 
   { now try to fix X, Y to make tooltip fit inside a window }
-  MinVar(X, ContainerWidth  - TooltipWidth );
-  MinVar(Y, ContainerHeight - TooltipHeight);
-  MaxVar(X, 0);
-  MaxVar(Y, 0);
+  MinVar(Pos.X, ContainerWidth  / TooltipLabelContainer.UIScale - TooltipWidth );
+  MinVar(Pos.Y, ContainerHeight / TooltipLabelContainer.UIScale - TooltipHeight);
+  MaxVar(Pos.X, 0);
+  MaxVar(Pos.Y, 0);
 
-  TooltipLabel.Anchor(hpLeft, X);
-  TooltipLabel.Anchor(vpBottom, Y);
-
-  { just explicitly call Render method of TooltipLabel }
-  TooltipLabel.Render;
+  TooltipLabelContainer.Translation := Pos;
 end;
 
-procedure TCastleUserInterfaceFont.GLContextClose;
+procedure TCastleUserInterfaceFont.InternalSetTooltipExists(const Value: Boolean);
 begin
-  { make sure to call GLContextClose on TooltipLabel,
-    actually we can just free it now }
-  FreeAndNil(TooltipLabel);
   inherited;
+  if TooltipLabelContainer <> nil then
+    TooltipLabelContainer.Exists := Value;
 end;
 
 function TCastleUserInterfaceFont.Font: TCastleAbstractFont;
@@ -316,9 +331,12 @@ begin
       FCustomizedFont.Italic := nil;
       FCustomizedFont.BoldItalic := nil;
     end;
+    { When Outline = 0, set FCustomizedFont.CustomizeOutline = false,
+      this makes switching between Outline <> 0 to Outline = 0 make correct changes
+      -- outline should disappear. }
+    FCustomizedFont.CustomizeOutline := Outline <> 0;
     if Outline <> 0 then
     begin
-      FCustomizedFont.CustomizeOutline := true;
       FCustomizedFont.Outline := Outline;
       FCustomizedFont.OutlineHighQuality := OutlineHighQuality;
       FCustomizedFont.OutlineColor := OutlineColor;
@@ -437,6 +455,10 @@ end;
 
 procedure TCastleUserInterfaceFont.FontChanged;
 begin
+  { Changing font properties, like FontSize, may change the control size
+    (which is usually adjusted to font size,
+    e.g. TCastleLabel, TCastleButton with AutoSize). }
+  VisibleChange([chRectangle]);
 end;
 
 procedure TCastleUserInterfaceFont.UIScaleChanged;

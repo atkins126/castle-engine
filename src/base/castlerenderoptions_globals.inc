@@ -1,6 +1,6 @@
 {%MainUnit castlerenderoptions.pas}
 {
-  Copyright 2002-2022 Michalis Kamburelis.
+  Copyright 2002-2023 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -170,11 +170,11 @@ type
     rmFull,
 
     { Solid color is used for everything. We do not show any color variation,
-      materials, lights, fog, textures on surfaces.
+      materials, lights, fog, textures on surfaces, alpha test.
       We still do back-face culling and depth test.
       The idea is that we "hit" the same pixels as normal rendering
       (with the exception of alpha test textures, this mode
-      doesn't set up alpha test for them).
+      doesn't set up alpha test since it doesn't set up textures).
       But everything has color TCastleRenderOptions.SolidColor.
 
       This is useful for special tricks. }
@@ -196,12 +196,10 @@ type
     TCastleRenderOptions.LineWidth, quite self-explanatory. }
   TWireframeEffect = (
 
-    { Default setting, model polygons are simply passed to OpenGL.
-      Whether this results in filled or wireframe look, depends on OpenGL
-      glPolygonMode setting, filled by default. }
+    { Default setting, polygons are rendered as filled polygons. }
     weNormal,
 
-    { The model is rendered in wireframe mode.
+    { Polygons are rendered as wireframe.
 
       LineWidth is used as wireframe line width (regardless of
       TCastleRenderOptions.Mode).
@@ -209,7 +207,7 @@ type
       Depending on TCastleRenderOptions.Mode value:
 
       @unorderedList(
-        @item(If <> rmFull then WireframeColor is used as wireframe
+        @item(If TCastleRenderOptions.Mode <> rmFull then WireframeColor is used as wireframe
           line color.)
 
         @item(If rmFull, then lines are colored
@@ -358,19 +356,19 @@ type
     bdOneMinusConstantAlpha
   );
 
-  { Various ways to sort the 3D objects, in particular useful to correctly
-    render the partially-transparent objects.
-    @seealso TCastleRenderOptions.BlendingSort }
+  { Various ways to sort the objects, useful to correctly
+    render partially-transparent objects.
+    See https://castle-engine.io/blending .
+    @seealso TCastleRenderOptions.BlendingSort
+    @seealso TCastleAbstractRootTransform.BlendingSort }
   TBlendingSort = (
     { Do not sort.
-      Using this for @link(TCastleRenderOptions.BlendingSort Scene.RenderOptions.BlendingSort)
-      is fastest, but will cause artifacts if multiple
+      This is of course fastest, but will cause artifacts if multiple
       partially-transparent objects may be visible on top of each other. }
     bsNone,
 
     { Sort objects by their Z coordinate.
-      Using this for @link(TCastleRenderOptions.BlendingSort Scene.RenderOptions.BlendingSort)
-      is very useful for 2D worlds, with flat 2D objects
+      Good for 2D worlds, with flat 2D objects
       that have zero (or near-zero) size in the Z axis,
       and they are moved in the Z axis to specify which is on top for another.
 
@@ -380,19 +378,52 @@ type
       The one with @italic(larger) Z coordinate is considered to be
       @italic(closer), this is consistent with the right-handed coordinate system.
 
-      Note that the actual camera position doesn't matter for this sorting.
+      Note that the camera position doesn't matter for this sorting.
       So the 2D object will look OK, @italic(even if viewed from an angle,
       even if viewed from the other side). }
     bs2D,
 
-    { Sort objects by the (3D) distance to the camera.
-      Using this for @link(TCastleRenderOptions.BlendingSort Scene.RenderOptions.BlendingSort)
-      is the best sorting method for 3D
+    { Sort objects by the (3D) distance of their bounding box to the camera.
+      This is the best universal sorting method for 3D
       scenes with many partially-transparent objects.
 
       The distance is measured from the middle
       of the bounding box to the camera posotion. }
-    bs3D
+    bs3D,
+
+    { Sort objects by the (3D) distance of their origin point (point (0,0,0) in local coordinates)
+      to the camera.
+      This is a useful sorting method for 3D
+      scenes with many partially-transparent objects.
+
+      This is an alternative to bs3D, it is more under your control
+      (because the origin doesn't change e.g. because of animations
+      or using TCastleBillboard, contrary to bounding box,
+      see https://github.com/castle-engine/castle-engine/issues/427#issuecomment-1365862663 ).
+      The downside is that you need to be more aware where is your object origin. }
+    bs3DOrigin,
+
+    { Sort objects by the (3D) distance of their origin point (point (0,0,0) in local coordinates)
+      to the camera, projected on the ground (Y=0).
+
+      Similar to bs3DOrigin, but the height of the object (above Y) doesn't matter. }
+    bs3DGround
+  );
+
+  T3DCoord = 0..2;
+  T3DCoords = set of T3DCoord;
+
+  { Render layer for @link(TCastleTransform.RenderLayer). }
+  TRenderLayer = (rlParent, rlBack, rlFront);
+
+  { Supported line types (patterns), for @link(TLinePropertiesNode.LineType)
+    or @link(TRenderContext.LineType). }
+  TLineType = (
+    ltSolid,
+    ltDashed,
+    ltDotted,
+    ltDashedDotted,
+    ltDashDotDot
   );
 
 const
@@ -464,6 +495,17 @@ const
 
   DefaultColorSpace = csLinearWhenPhysicalMaterial;
 
+  { Default for TCastleWindow.StencilBits and TCastleControl.StencilBits.
+
+    Non-zero now, which means that in both TCastleWindow and TCastleControl,
+    shadow volumes should work by default.
+
+    Note that TCastleWindow implementation makes a smooth fallback:
+    if we cannot get stencil, we retry initialization without stencil buffer.
+    This way we will open the window reliably, and in the worst case -- shadow volumes
+    will not work. }
+  DefaultStencilBits = 8;
+
 var
   { Log shadow volume information.
     See https://castle-engine.io/manual_log.php about the log. }
@@ -505,6 +547,9 @@ var
       )
     ) }
   ToneMapping: TToneMapping = tmNone;
+
+  { Force given rendering for all scenes, if not weNormal. }
+  InternalForceWireframe: TWireframeEffect;
 
 {$ifdef FPC}
 function GetGammaCorrection: TGammaCorrection;

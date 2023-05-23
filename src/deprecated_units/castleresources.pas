@@ -1,5 +1,5 @@
 {
-  Copyright 2006-2022 Michalis Kamburelis.
+  Copyright 2006-2023 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -529,10 +529,12 @@ procedure RegisterResourceClass(const AClass: T3DResourceClass; const TypeName: 
 
 implementation
 
+{$warnings off} // using deprecated CastleProgress in deprecated
 uses SysUtils,
   CastleProgress, CastleXMLUtils, CastleUtils, CastleSceneCore,
   CastleStringUtils, CastleLog, CastleConfig, CastleApplicationProperties,
   CastleFilesUtils, CastleInternalNodeInterpolator, CastleURIUtils;
+{$warnings on}
 
 var
   UnitFinalization: Boolean;
@@ -605,7 +607,7 @@ begin
   if DoProgress then Progress.Step;
 
   if Scene <> nil then
-    Scene.PrepareResources(ScenePrepareResources, false, PrepareParams);
+    Scene.PrepareResources(ScenePrepareResources, PrepareParams);
   if DoProgress then Progress.Step;
 end;
 
@@ -934,7 +936,7 @@ function T3DResource.CreateSceneForPool(const Params: TPrepareParams): TCastleSc
 begin
   Result := ModelState.Scene.Clone(nil);
   Result.DefaultAnimationTransition := DefaultAnimationTransition;
-  Result.PrepareResources(ScenePrepareResources, false, Params);
+  Result.PrepareResources(ScenePrepareResources, Params);
 end;
 
 procedure T3DResource.PrepareCore(const Params: TPrepareParams;

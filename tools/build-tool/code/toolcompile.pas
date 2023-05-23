@@ -1,5 +1,5 @@
 {
-  Copyright 2014-2022 Michalis Kamburelis.
+  Copyright 2014-2023 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -54,6 +54,8 @@ type
     { Extra compiler options, directly passed to fpc/dcc on command-line.
       For now, only supported by CompileFpc and CompileDelphi, ignored by CompileLazbuild. }
     ExtraOptions: TCastleStringList;
+    { Allow using cache. @true by default. }
+    AllowCache: Boolean;
     constructor Create;
     destructor Destroy; override;
   end;
@@ -118,7 +120,7 @@ const
       So it is simpler to just name all includes and units differently,
       even across system-specific dirs. }
 
-  EnginePaths: array [0..41] of String = (
+  EnginePaths: array [0..42] of String = (
     'base',
     'common_includes',
     'base/android',
@@ -139,6 +141,7 @@ const
     'scene/x3d',
     'scene/load',
     'scene/load/spine',
+    'scene/load/md3',
     'scene/load/collada',
     'scene/load/pasgltf',
     'audio',
@@ -165,7 +168,8 @@ const
   );
 
   { Additional include/units paths, only for Delphi. }
-  EnginePathsDelphi: array [0..1] of String = (
+  EnginePathsDelphi: array [0..2] of String = (
+    'delphi',
     'compatibility/delphi-only',
     'compatibility/delphi-only/fcl-json'
   );
@@ -175,6 +179,12 @@ const
   EngineLibraryPaths: array [0..1] of String = (
     'vampyre_imaginglib/src/Extensions/J2KObjects',
     'vampyre_imaginglib/src/Extensions/LibTiff/Compiled'
+  );
+
+  CompilationModeToStr: array [TCompilationMode] of string = (
+    'release',
+    'valgrind',
+    'debug'
   );
 
 implementation
@@ -192,6 +202,7 @@ begin
   SearchPaths := TCastleStringList.Create;
   LibraryPaths := TCastleStringList.Create;
   ExtraOptions := TCastleStringList.Create;
+  AllowCache := true;
 end;
 
 destructor TCompilerOptions.Destroy;
@@ -306,6 +317,45 @@ begin
     DeleteFilesRecursive('*.rst');
     DeleteFilesRecursive('*.rsj');
     Writeln('Deleted ', Helper.DeletedFiles, ' files');
+  finally FreeAndNil(Helper) end;
+end;
+
+{ CopyCacheContents ---------------------------------------------------------- }
+
+type
+  TCopyFromCacheHelper = class
+    DestPath: String;
+    procedure FoundFile(const FileInfo: TFileInfo; var StopSearch: Boolean);
+  end;
+
+procedure TCopyFromCacheHelper.FoundFile(const FileInfo: TFileInfo; var StopSearch: Boolean);
+var
+  DestFile: String;
+begin
+  DestFile := DestPath + FileInfo.Name;
+
+  { We copy from cache *without* overwriting. This way, in case the cache contained
+    outdated / invalid outputs, on first run new compilation (FPC) should overwrite it,
+    and we should not overwrite it back with cache. }
+
+  if FileExists(DestFile) then
+  begin
+    WritelnVerbose(Format('Not copying from cache "%s", already exists', [FileInfo.Name]));
+  end else
+  begin
+    WritelnVerbose(Format('Copying from cache "%s"', [FileInfo.Name]));
+    CheckCopyFile(FileInfo.AbsoluteName, DestFile);
+  end;
+end;
+
+procedure CopyCacheContents(const SourcePath, DestPath: String);
+var
+  Helper: TCopyFromCacheHelper;
+begin
+  Helper := TCopyFromCacheHelper.Create;
+  try
+    Helper.DestPath := InclPathDelim(DestPath);
+    FindFiles(SourcePath, '*', false, {$ifdef FPC}@{$endif}Helper.FoundFile, []);
   finally FreeAndNil(Helper) end;
 end;
 
@@ -532,11 +582,30 @@ var
       FpcOptions.Add('-d' + S);
   end;
 
+  procedure CopyFromCache(const CompilationOutputPathFinal: String);
+  var
+    CachePathFull: String;
+  begin
+    CachePathFull := CachePath +
+      CPUToString(Options.CPU) + '-' + OSToString(Options.OS) + PathDelim +
+      CompilationModeToStr[Options.Mode] + PathDelim;
+    if DirectoryExists(CachePathFull) then
+    begin
+      WritelnVerbose(Format('Using cache "%s" to speed up compilation', [CachePathFull]));
+      CopyCacheContents(CachePathFull, CompilationOutputPathFinal);
+    end;
+  end;
+
 var
-  FpcOutput, FpcExe: string;
+  FpcOutput, FpcExe, CompilationOutputPathFinal, FpcStandardUnitsPath: string;
   FpcExitStatus: Integer;
 begin
   FpcVer := FpcVersion;
+
+  CompilationOutputPathFinal := CompilationOutputPath(coFpc, Options.OS, Options.CPU, WorkingDirectory);
+
+  if Options.AllowCache then
+    CopyFromCache(CompilationOutputPathFinal);
 
   FpcOptions := TCastleStringList.Create;
   try
@@ -744,10 +813,23 @@ begin
     FpcOptions.AddRange(Options.ExtraOptions);
 
     FpcOptions.Add(CompileFile);
-    FpcOptions.Add('-FU' + CompilationOutputPath(coFpc, Options.OS, Options.CPU, WorkingDirectory));
+    FpcOptions.Add('-FU' + CompilationOutputPathFinal);
 
     Writeln('FPC executing...');
-    FpcExe := FindExeFpcCompiler;
+    FpcExe := FindExeFpcCompiler(true, FpcStandardUnitsPath);
+
+    if FpcStandardUnitsPath <> '' then
+    begin
+      FpcOptions.Add('-Fu' + FpcStandardUnitsPath);
+
+      { Do not read system-wide FPC config, to allow this bundled FPC to coexist
+        with your system-wide FPC installation without any relation. }
+      FpcOptions.Add('-n');
+
+      { As the bundled FPC has no config, by default it is rather silent.
+        Add options to display info (and Warnings and Notes) during compilation to see progress. }
+      FpcOptions.Add('-viwn');
+    end;
 
     RunCommandIndirPassthrough(WorkingDirectory, FpcExe, FpcOptions.ToArray, FpcOutput, FpcExitStatus, '', '', @FilterFpcOutput);
     if FpcExitStatus <> 0 then
@@ -1024,11 +1106,10 @@ begin
     // register CGE packages first
     if CastleEnginePath <> '' then
     begin
-      LazbuildAddPackage('src/vampyre_imaginglib/src/Packages/VampyreImagingPackage.lpk');
-      LazbuildAddPackage('src/vampyre_imaginglib/src/Packages/VampyreImagingPackageExt.lpk');
       LazbuildAddPackage('packages/castle_base.lpk');
       LazbuildAddPackage('packages/castle_window.lpk');
       LazbuildAddPackage('packages/castle_components.lpk');
+      LazbuildAddPackage('packages/castle_editor_components.lpk');
     end;
 
     LazbuildOptions.Clear;

@@ -1,6 +1,6 @@
 {%MainUnit castlecontrols.pas}
 {
-  Copyright 2018-2022 Michalis Kamburelis.
+  Copyright 2018-2023 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -16,6 +16,8 @@
 
 {$ifdef read_interface}
 
+  EMaximumDesignDepth = class(Exception);
+
   { Contents of this user-interface control are loaded from an indicated file
     (by the @link(URL) property).
 
@@ -27,6 +29,9 @@
       LoadDepth: Cardinal;
     var
       FDesign: TCastleUserInterface;
+      { We don't use Self as Owner of FDesign, to allow freeing everything
+        loaded by UserInterfaceLoad by simple FreeAndNil(FDesignOwner). }
+      FDesignOwner: TComponent;
       FDesignObserver: TFreeNotificationObserver;
       FURL: String;
       FRevertURL: String;
@@ -39,6 +44,18 @@
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
     function PropertySections(const PropertyName: String): TPropertySections; override;
+
+    { Find by name a component in currently loaded design.
+      When the name is not found, raises exception (unless Required is @false,
+      then it returns @nil). }
+    function DesignedComponent(const ComponentName: String;
+      const Required: Boolean = true): TComponent;
+
+    function FindRequiredComponent(const ComponentName: String): TComponent; deprecated 'use DesignedComponent(ComponentName)';
+    function FindComponent(const ComponentName: String): TComponent; deprecated 'use DesignedComponent(ComponentName, false)';
+
+    { Loaded design, only for internal usage. @exclude }
+    property InternalDesign: TCastleUserInterface read FDesign;
   published
     { Load file with the user interface design.
       The file should be in the format created by Castle Game Engine Editor
@@ -46,9 +63,9 @@
       Setting this property automatically unloads the previous design,
       and loads a new one (if the value is <> '').
 
-      After loading a design, you can use FindComponent or
-      @link(TComponentHelper.FindRequiredComponent) to find the components inside.
-      The owner of the design is this TCastleDesign instance. So e.g. this works:
+      After loading a design, you can use @link(DesignedComponent)
+      to find the components inside.
+      So e.g. this works:
 
       @longCode(#
       var
@@ -57,7 +74,7 @@
       begin
         MyDesign := TCastleDesign.Create(...);
         MyDesign.URL := 'castle-data:/my_user_interface.castle-user-interface';
-        MyButton := MyDesign.FindRequiredComponent('MyButton') as TCastleButton;
+        MyButton := MyDesign.DesignedComponent('MyButton') as TCastleButton;
         MyButton.OnClick := ...;
       end;
       #)
@@ -122,7 +139,8 @@ begin
     if FDesign <> nil then
     begin
       FStretchWhenNotLoaded := FDesign.FullSize;
-      FreeAndNil(FDesign);
+      FreeAndNil(FDesignOwner);
+      Assert(FDesign = nil); // DesignFreeNotification should set FDesign to nil
     end;
 
     FURL := Value;
@@ -132,12 +150,13 @@ begin
       try
         { Check LoadDepth = MaxLoadDepth to prevent infinite loop when referencing your own design. }
         if LoadDepth = MaxLoadDepth then
-          raise Exception.CreateFmt('Exceeded maximum depth (%d) when loading TCastleDesign within TCastleDesign. It is possible that TCastleDesign references its own design', [
+          raise EMaximumDesignDepth.CreateFmt('Exceeded maximum depth (%d) when loading TCastleDesign within TCastleDesign. It is possible that TCastleDesign references its own design', [
             MaxLoadDepth
           ]);
         Inc(LoadDepth);
         try
-          FDesign := UserInterfaceLoad(Value, Self);
+          FDesignOwner := TComponent.Create(Self);
+          FDesign := UserInterfaceLoad(Value, FDesignOwner);
         finally Dec(LoadDepth) end;
       except
         { If loading design file failed, and we're inside CGE editor,
@@ -194,6 +213,28 @@ begin
     Result := [psBasic]
   else
     Result := inherited PropertySections(PropertyName);
+end;
+
+function TCastleDesign.DesignedComponent(const ComponentName: String;
+  const Required: Boolean): TComponent;
+begin
+  if FDesignOwner <> nil then
+    Result := FDesignOwner.FindComponent(ComponentName)
+  else
+    Result := nil;
+
+  if Required and (Result = nil) then
+    raise EComponentNotFound.CreateFmt('Cannot find component named "%s" in design "%s"', [ComponentName, Name]);
+end;
+
+function TCastleDesign.FindRequiredComponent(const ComponentName: String): TComponent;
+begin
+  Result := DesignedComponent(ComponentName, true);
+end;
+
+function TCastleDesign.FindComponent(const ComponentName: String): TComponent;
+begin
+  Result := DesignedComponent(ComponentName, false);
 end;
 
 {$endif read_implementation}

@@ -1,6 +1,6 @@
 {%MainUnit castlecontrols.pas}
 {
-  Copyright 2010-2022 Michalis Kamburelis.
+  Copyright 2010-2023 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -57,6 +57,7 @@
     procedure SetInternalText(const Value: String); override;
     procedure UIScaleChanged; override;
     procedure TranslateProperties(const TranslatePropertyEvent: TTranslatePropertyEvent); override;
+    procedure Loaded; override;
   public
     const
       DefaultLineSpacing = 2;
@@ -74,6 +75,7 @@
 
     { Color tint of the background image, see @link(Frame). By default white. }
     property FrameColor: TCastleColor read FFrameColor write FFrameColor;
+      {$ifdef FPC}deprecated 'display frame around label using Border or parent UI control';{$endif}
 
     function DisplayChars: Cardinal;
   published
@@ -145,6 +147,7 @@
     { Draw frame around the text. Frame uses theme image tiLabel,
       see TCastleTheme.Images if you want to customize it. }
     property Frame: boolean read FFrame write FFrame default false;
+      {$ifdef FPC}deprecated 'display frame around label using Border or parent UI control';{$endif}
 
     { If non-zero, limit the width of resulting label.
       The text will be broken in the middle of lines, to make it fit
@@ -179,9 +182,11 @@
       which affects the rest of localization routines. }
     property CaptionTranslate: Boolean read FCaptionTranslate write FCaptionTranslate default true;
 
+  {$warnings off} // silence the fact that FrameColor is deprecated
   {$define read_interface_class}
   {$I auto_generated_persistent_vectors/tcastlelabel_persistent_vectors.inc}
   {$undef read_interface_class}
+  {$warnings on}
   end;
 
 {$endif read_interface}
@@ -210,16 +215,20 @@ begin
   FMaxDisplayChars := -1;
   FCaptionTranslate := true;
 
+  {$warnings off} // silence the fact that FrameColor is deprecated
   {$define read_implementation_constructor}
   {$I auto_generated_persistent_vectors/tcastlelabel_persistent_vectors.inc}
   {$undef read_implementation_constructor}
+  {$warnings on}
 end;
 
 destructor TCastleLabel.Destroy;
 begin
+  {$warnings off} // silence the fact that FrameColor is deprecated
   {$define read_implementation_destructor}
   {$I auto_generated_persistent_vectors/tcastlelabel_persistent_vectors.inc}
   {$undef read_implementation_destructor}
+  {$warnings on}
 
   FreeAndNil(FText);
   FreeAndNil(CachedRichText);
@@ -291,20 +300,20 @@ begin
 
     PreferredWidth := TextToRenderWidth + 2 * PaddingHorizontalScaled;
     PreferredHeight :=
-      Font.RowHeight * TextToRenderCount +
+      Font.Height * TextToRenderCount +
       LineSpacingScaled +
       2 * PaddingVerticalScaled +
-      { This additional Font.Descend is actually always an empty space on top of
-        the text. So we do not have to increase PreferredHeight by this Font.Descend,
+      { This additional Font.DescenderHeight is actually always an empty space on top of
+        the text. So we do not have to increase PreferredHeight by this Font.DescenderHeight,
         strictly speaking (if we treat PreferredHeight as a "minimum bounding box height").
 
         But adding it makes the text looks nicer centered vertically in the bbox.
         Visually you have an ~empty space at the bottom (not really empty,
-        but usually empty) of height Font.Descend and empty space at top
-        (really always empty) of height Font.Descend.
+        but usually empty) of height Font.DescenderHeight and empty space at top
+        (really always empty) of height Font.DescenderHeight.
 
         So anchoring this TCastleLabel with vpMiddle to something else looks better. }
-      Font.Descend;
+      Font.DescenderHeight;
   end;
 end;
 
@@ -327,7 +336,7 @@ var
 
   function TextHeight: Single;
   begin
-    Result := TextToRender.Count * (Font.RowHeight + LineSpacingScaled);
+    Result := TextToRender.Count * (Font.Height + LineSpacingScaled);
   end;
 
 var
@@ -343,8 +352,11 @@ begin
   PaddingHorizontalScaled := US * (PaddingHorizontal + Padding);
   PaddingVerticalScaled := US * (PaddingVertical + Padding);
   LineSpacingScaled := US * LineSpacing;
+
+  {$warnings off} // using deprecated just to keep it working
   if Frame then
     Theme.Draw(SR, ImageType, UIScale, FrameColor);
+  {$warnings on}
 
   { calculate TextX }
   case Alignment of
@@ -357,7 +369,7 @@ begin
   end;
 
   { calculate TextBottom }
-  TextBottom := SR.Bottom + PaddingVerticalScaled + Font.Descend;
+  TextBottom := SR.Bottom + PaddingVerticalScaled + Font.DescenderHeight;
 
   if (not Html) and (MaxWidth = 0) and
      (AutoSize or (VerticalAlignment = vpBottom)) and
@@ -373,7 +385,7 @@ begin
     if not AutoSize then
       case VerticalAlignment of
         vpMiddle: TextBottom := SR.Bottom + (SR.Height - TextHeight) / 2;
-        vpTop   : TextBottom := SR.Top - PaddingVerticalScaled - Font.Descend - TextHeight;
+        vpTop   : TextBottom := SR.Top - PaddingVerticalScaled - Font.DescenderHeight - TextHeight;
         else ;
       end;
 
@@ -558,8 +570,19 @@ begin
   end;
 end;
 
+procedure TCastleLabel.Loaded;
+begin
+  inherited;
+  {$warnings off} // using deprecated just to make a warning
+  if Frame or (not TVector4.PerfectlyEquals(White, FrameColor)) then
+    WritelnWarning('TCastleLabel.Frame and FrameColor are deprecated. Instead: Use TCastleLabel.Border, or place TCastleLabel under a component like TCastleRectangleControl or TCastleImageControl that defines a background.');
+  {$warnings on}
+end;
+
+{$warnings off} // silence the fact that FrameColor is deprecated
 {$define read_implementation_methods}
 {$I auto_generated_persistent_vectors/tcastlelabel_persistent_vectors.inc}
 {$undef read_implementation_methods}
+{$warnings on}
 
 {$endif read_implementation}

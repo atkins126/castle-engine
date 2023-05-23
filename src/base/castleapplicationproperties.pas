@@ -1,5 +1,5 @@
 {
-  Copyright 2014-2018 Michalis Kamburelis.
+  Copyright 2014-2023 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -58,7 +58,7 @@ type
   TCastleApplicationProperties = class
   private
     FIsGLContextOpen, FFileAccessSafe: boolean;
-    FOnGLContextOpen, FOnGLContextClose: TGLContextEventList;
+    FOnGLContextEarlyOpen, FOnGLContextOpen, FOnGLContextClose: TGLContextEventList;
     FOnUpdate, FOnInitializeJavaActivity,
       FOnGLContextOpenObject, FOnGLContextCloseObject,
       FOnPause, FOnResume: TNotifyEventList;
@@ -78,8 +78,8 @@ type
       { Some platforms do not support Application.ProcessMessages, which means you
         cannot just write a function like MessageYesNo that waits until user clicks
         something.
-        You *have* to implement modal boxes then using states,
-        e.g. using CastleDialogStates or your own TUIState descendants. }
+        You *have* to implement modal boxes then using views,
+        e.g. using CastleDialogViews or your own TCastleView descendants. }
       PlatformAllowsModalRoutines = {$if defined(CASTLE_IOS) or defined(CASTLE_NINTENDO_SWITCH)} false {$else} true {$endif};
 
     constructor Create;
@@ -189,6 +189,10 @@ type
       )
     }
     property LimitFPS: Single read FLimitFPS write FLimitFPS {$ifdef FPC} default DefaultLimitFPS {$endif};
+
+    { Called before OnGLContextOpen, even before Application.OnInitialize,
+      but after we can read files. }
+    property OnGLContextEarlyOpen: TGLContextEventList read FOnGLContextEarlyOpen;
 
     { Callbacks called when the OpenGL context is opened or closed.
       Use when you want to be notified about OpenGL context availability,
@@ -374,6 +378,7 @@ constructor TCastleApplicationProperties.Create;
 begin
   inherited;
   FOnGLContextOpen := TGLContextEventList.Create;
+  FOnGLContextEarlyOpen := TGLContextEventList.Create;
   FOnGLContextOpenObject := TNotifyEventList.Create;
   FOnGLContextClose := TGLContextEventList.Create;
   FOnGLContextCloseObject := TNotifyEventList.Create;
@@ -406,6 +411,7 @@ end;
 destructor TCastleApplicationProperties.Destroy;
 begin
   FreeAndNil(FOnGLContextOpen);
+  FreeAndNil(FOnGLContextEarlyOpen);
   FreeAndNil(FOnGLContextOpenObject);
   FreeAndNil(FOnGLContextClose);
   FreeAndNil(FOnGLContextCloseObject);
@@ -440,6 +446,7 @@ end;
 procedure TCastleApplicationProperties._GLContextEarlyOpen;
 begin
   FIsGLContextOpen := true;
+  FOnGLContextEarlyOpen.ExecuteForward;
 end;
 
 procedure TCastleApplicationProperties._GLContextOpen;

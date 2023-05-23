@@ -1,6 +1,6 @@
 // -*- compile-command: "./test_single_testcase.sh TTestCastleVectors" -*-
 {
-  Copyright 2004-2022 Michalis Kamburelis.
+  Copyright 2004-2023 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -53,12 +53,14 @@ type
     procedure TestPlaneMoveRandom;
     procedure TestTryInverseHarder;
     procedure TestMaxAbsVectorCoord;
+    procedure TestMinAbsVectorCoord;
     procedure TestPointOnLineClosestToLine;
     procedure TestRotatePointAroundAxis;
     procedure TestMakeVectorOrthogonal;
     procedure TestEpsilonInModelViewToNormalMatrix;
     procedure TestInit;
     procedure TestRotationZeroAxis;
+    procedure TestVectorsList;
   end;
 
 function RandomVector: TVector3;
@@ -244,14 +246,14 @@ begin
   PlaneConstCoord := Random(3);
   PlaneConstVal := Random*1000 - 500;
   FillChar(Plane, SizeOf(Plane), 0);
-  Plane.InternalData[PlaneConstCoord] := -1;
-  Plane.InternalData[3] := PlaneConstVal;
+  Plane.Data[PlaneConstCoord] := -1;
+  Plane.Data[3] := PlaneConstVal;
 
   { czasami uczyn promien rownoleglym do [Simple]Plane (zeby zobaczyc
     czy sobie z tym radzi) }
   if Random(10) = 1 then
   begin
-   RayDirection.InternalData[PlaneConstCoord] := 0;
+   RayDirection.Data[PlaneConstCoord] := 0;
    b1 := TrySimplePlaneRayIntersection(I1, PlaneConstCoord, PlaneConstVal, RayOrigin, RayDirection);
    b2 := TryPlaneRayIntersection(I2, Plane, RayOrigin, RayDirection);
    Check( (not b1) and (not b2) ,'intersect with parallel plane');
@@ -937,6 +939,21 @@ begin
   AssertEquals(3, MaxAbsVectorCoord(Vector4(-1, -2, -3, -10)));
 end;
 
+procedure TTestCastleVectors.TestMinAbsVectorCoord;
+begin
+  AssertEquals(0, MinAbsVectorCoord(Vector2(1, -10)));
+  AssertEquals(0, MinAbsVectorCoord(Vector2(1,  10)));
+  AssertEquals(1, MinAbsVectorCoord(Vector2(-10, -1)));
+  AssertEquals(1, MinAbsVectorCoord(Vector2( 10,  1)));
+
+  AssertEquals(0, MinAbsVectorCoord(Vector3(1, 2, 3)));
+  AssertEquals(1, MinAbsVectorCoord(Vector3(33, 2, 3)));
+  AssertEquals(2, MinAbsVectorCoord(Vector3(3, 2, 1)));
+
+  AssertEquals(0, MinAbsVectorCoord(Vector4(1, 2, 3, 10)));
+  AssertEquals(0, MinAbsVectorCoord(Vector4(-1, -2, -3, -10)));
+end;
+
 procedure TTestCastleVectors.TestPointOnLineClosestToLine;
 var
   I: TVector3;
@@ -1160,6 +1177,80 @@ begin
   AssertMatrixEquals(T.InverseTransform, TMatrix4.Identity);
   AssertSameValue(1, T.Scale);
   AssertTrue(T.UniformScale);
+end;
+
+procedure TTestCastleVectors.TestVectorsList;
+
+{ This test is similar to TTestGenericsCollections.TestVectorsList,
+  but now using TVector2 instead of TMyVector. }
+
+var
+  List: TVector2List;
+  R1, R2, R: TVector2;
+begin
+  List := TVector2List.Create;
+  try
+    R1.X := 11;
+    R1.Y := 22;
+    List.Add(R1);
+
+    R2.X := 33;
+    R2.Y := 44;
+    List.Add(R2);
+
+    R2.X := 33;
+    R2.Y := 44;
+    List.Add(R2);
+
+    AssertEquals(3, List.Count);
+    AssertEquals(11, List[0].X);
+    AssertEquals(22, List[0].Y);
+    AssertEquals(33, List[1].X);
+    AssertEquals(44, List[1].Y);
+    AssertEquals(33, List[2].X);
+    AssertEquals(44, List[2].Y);
+
+    List.Delete(2);
+
+    AssertEquals(2, List.Count);
+    AssertEquals(11, List[0].X);
+    AssertEquals(22, List[0].Y);
+    AssertEquals(33, List[1].X);
+    AssertEquals(44, List[1].Y);
+
+    AssertEquals(0, List.IndexOf(R1));
+    AssertEquals(1, List.IndexOf(R2));
+
+    // change R1 and R2, to make sure it doesn't matter for tests
+    R1.X := 111111;
+    R1.Y := 222222;
+    R2.X := 333333;
+    R2.Y := 444444;
+    AssertEquals(-1, List.IndexOf(R1));
+    AssertEquals(-1, List.IndexOf(R2));
+
+    R.X := 11;
+    R.Y := 22;
+    AssertEquals(0, List.IndexOf(R));
+
+    R.X := 33;
+    R.Y := 44;
+    AssertEquals(1, List.IndexOf(R));
+
+    R.X := 11;
+    R.Y := 22;
+    List.Remove(R);
+    AssertEquals(1, List.Count);
+    AssertEquals(33, List[0].X);
+    AssertEquals(44, List[0].Y);
+
+    R.X := 666;
+    R.Y := 22;
+    List.Remove(R); // does nothing, no such item
+    AssertEquals(1, List.Count);
+    AssertEquals(33, List[0].X);
+    AssertEquals(44, List[0].Y);
+  finally FreeAndNil(List) end;
 end;
 
 initialization

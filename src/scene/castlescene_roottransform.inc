@@ -363,11 +363,13 @@ end;
 
 function TCastleRootTransform.PropertySections(const PropertyName: String): TPropertySections;
 begin
-  if (PropertyName = 'MainScene') or
-     (PropertyName = 'UseHeadlight') then
-      Result := [psBasic]
-    else
-      Result := inherited PropertySections(PropertyName);
+  // These are deprecated now
+  // if (PropertyName = 'MainScene') or
+  //    (PropertyName = 'UseHeadlight') then
+  //     Result := [psBasic]
+  //   else
+
+  Result := inherited PropertySections(PropertyName);
 end;
 
 function TCastleRootTransform.IgnoreTransparentItem(
@@ -410,6 +412,14 @@ begin
   if MainScene <> nil then
     WritelnWarning('MainScene is deprecated (on TCastleViewport.Items). Instead: Almost all features are available without the need to set MainScene');
   {$warnings on}
+  if not (
+      TVector3.Equals(Translation, TVector3.Zero) and
+      (Rotation.W = 0) and
+      TVector3.Equals(Scale, NoScale)
+    ) then
+    WritelnWarning('Viewport.Items (TCastleRootTransform) has some transformation (non-zero translation, rotation or non-identity scale). ' +
+      'While allowed, this is known to cause a bit weird behavior at design-time (as the root transformation affects all, even internal, cameras). ' +
+      'We advise to leave the TCastleRootTransform untransformed in most cases.');
 end;
 
 {$endif read_implementation}

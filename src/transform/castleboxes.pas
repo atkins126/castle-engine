@@ -143,6 +143,16 @@ type
     function AverageSize(const AllowZero: boolean;
       const EmptyBoxSize: Single): Single; overload;
 
+    { Average size of TBox3D, or EmptyBoxSize if box is empty.
+      2D box projection is obtained by rejecting the IgnoreIndex coordinate
+      (must be 0, 1 or 2).
+
+      @param(AllowZero Decides what to do when box is not empty but the result
+        would be zero, which means that the box is infinitely thin in all axes.
+        If @true, then result is just 0, otherwise it's EmptyBoxSize.) }
+    function AverageSize2D(const AllowZero: boolean;
+      const EmptyBoxSize: Single; const IgnoreIndex: T3DAxis): Single; overload;
+
     { Largest size of TBox3D, or EmptyBoxSize if box is empty.
       @param(AllowZero Decides what to do when box is not empty but the result
         would be zero, which means that the box is infinitely thin in all axes.
@@ -782,6 +792,28 @@ begin
   end;
 end;
 
+function TBox3D.AverageSize2D(const AllowZero: boolean;
+  const EmptyBoxSize: Single; const IgnoreIndex: T3DAxis): Single;
+begin
+  if IsEmpty then
+    Result := EmptyBoxSize else
+  begin
+    case IgnoreIndex of
+      0: Result := ((Data[1].Y - Data[0].Y) +
+                    (Data[1].Z - Data[0].Z)) / 2;
+      1: Result := ((Data[1].X - Data[0].X) +
+                    (Data[1].Z - Data[0].Z)) / 2;
+      2: Result := ((Data[1].X - Data[0].X) +
+                    (Data[1].Y - Data[0].Y)) / 2;
+      {$ifndef COMPILER_CASE_ANALYSIS}
+      else raise EInternalError.Create(20221209);
+      {$endif}
+    end;
+    if (not AllowZero) and (Result = 0) then
+      Result := EmptyBoxSize;
+  end;
+end;
+
 function TBox3D.MaxSize: Single;
 begin
   CheckNonEmpty;
@@ -1047,15 +1079,15 @@ var
 begin
   if IsEmpty then
   begin
-    Data[0] := Points.List^[0];
-    Data[1] := Points.List^[0];
+    Data[0] := Points.L[0];
+    Data[1] := Points.L[0];
     StartIndex := 1;
   end else
     StartIndex := 0;
 
   for I := StartIndex to Points.Count - 1 do
   begin
-    V := Points.List^[I];
+    V := Points.L[I];
     MinVar(Data[0].X, V.X);
     MaxVar(Data[1].X, V.X);
     MinVar(Data[0].Y, V.Y);
@@ -1074,11 +1106,16 @@ begin
     Result := TBox3D.Empty
   else
   begin
-    Result.Data[0] := Points.List^[0];
-    Result.Data[1] := Points.List^[0];
+    Result.Data[0] := Points.L[0];
+    Result.Data[1] := Points.L[0];
     for I := 1 to Points.Count - 1 do
     begin
-      V := Points.List^[I];
+      { Note: On Delphi, we *have to* use L[...] below and depend on $pointermath on,
+        instead of using List^[...].
+        That's because on Delphi, List^[...] may have too small (declared) upper size
+        due to Delphi not supporting SizeOf(T) in generics.
+        See https://github.com/castle-engine/castle-engine/issues/474 . }
+      V := Points.L[I];
       MinVar(Result.Data[0].X, V.X);
       MaxVar(Result.Data[1].X, V.X);
       MinVar(Result.Data[0].Y, V.Y);
@@ -1199,16 +1236,16 @@ function TBox3D.Transform(
       { Calculate Result[0].Data[I], Result[1].Data[I] }
       for J := 0 to 2 do
       begin
-        A := Matrix.Data[J, I] * Data[0].InternalData[J];
-        B := Matrix.Data[J, I] * Data[1].InternalData[J];
+        A := Matrix.Data[J, I] * Data[0].Data[J];
+        B := Matrix.Data[J, I] * Data[1].Data[J];
         if A < B then
         begin
-          Result.Data[0].InternalData[I] := Result.Data[0].InternalData[I] + A;
-          Result.Data[1].InternalData[I] := Result.Data[1].InternalData[I] + B;
+          Result.Data[0].Data[I] := Result.Data[0].Data[I] + A;
+          Result.Data[1].Data[I] := Result.Data[1].Data[I] + B;
         end else
         begin
-          Result.Data[0].InternalData[I] := Result.Data[0].InternalData[I] + B;
-          Result.Data[1].InternalData[I] := Result.Data[1].InternalData[I] + A;
+          Result.Data[0].Data[I] := Result.Data[0].Data[I] + B;
+          Result.Data[1].Data[I] := Result.Data[1].Data[I] + A;
         end;
       end;
     end;
@@ -1281,11 +1318,11 @@ var
 begin
   for I := 0 to 2 do
   begin
-    if Point.InternalData[I] < Data[0][I] then
-      Point.InternalData[I] := Data[0][I]
+    if Point.Data[I] < Data[0][I] then
+      Point.Data[I] := Data[0][I]
     else
-    if Point.InternalData[I] > Data[1][I] then
-      Point.InternalData[I] := Data[1][I];
+    if Point.Data[I] > Data[1][I] then
+      Point.Data[I] := Data[1][I];
   end;
 end;
 
@@ -1490,8 +1527,8 @@ begin
 
     { Code optimized to avoid "if", instead doing table lookup by BoxBool }
     B := Plane[I] >= 0;
-    VMin.InternalData[I] := BoxBool[not B][I];
-    VMax.InternalData[I] := BoxBool[B][I];
+    VMin.Data[I] := BoxBool[not B][I];
+    VMax.Data[I] := BoxBool[B][I];
   end;
 
   if Plane.X * VMin.X +
@@ -1683,8 +1720,8 @@ begin
   { calculate BoxCenter and BoxHalfSize }
   for I := 0 to 2 do
   begin
-    BoxCenter.InternalData[I] := (Data[0][I] + Data[1][I]) / 2;
-    BoxHalfSize.InternalData[I] := (Data[1][I] - Data[0][I]) / 2;
+    BoxCenter.Data[I] := (Data[0][I] + Data[1][I]) / 2;
+    BoxHalfSize.Data[I] := (Data[1][I] - Data[0][I]) / 2;
   end;
 
   { calculate TriangleMoved (Triangle shifted by -BoxCenter,
@@ -2231,8 +2268,8 @@ function TBox3D.OrthoProject(const Pos, Dir, Side, Up: TVector3): TFloatRectangl
     PDiff: TVector3;
   begin
     PDiff := P - Pos;
-    Result.InternalData[0] := TVector3.DotProduct(PDiff, Side);
-    Result.InternalData[1] := TVector3.DotProduct(PDiff, Up);
+    Result.Data[0] := TVector3.DotProduct(PDiff, Side);
+    Result.Data[1] := TVector3.DotProduct(PDiff, Up);
   end;
 
 var
@@ -2260,12 +2297,14 @@ begin
     ( B.IsEmpty or
       ( PointsDistanceSqr(A.Center, SortPosition) >
         PointsDistanceSqr(B.Center, SortPosition))) then
-    Result := -1 else
+    Result := -1
+  else
   if (not B.IsEmpty) and
     ( A.IsEmpty or
       ( PointsDistanceSqr(B.Center, SortPosition) >
         PointsDistanceSqr(A.Center, SortPosition))) then
-    Result :=  1 else
+    Result :=  1
+  else
     Result :=  0;
 end;
 
@@ -2383,12 +2422,12 @@ begin
   for I := 0 to 2 do
     if Plane[I] > 0 then
     begin
-      VMin.InternalData[I] := -BoxHalfSize[I];
-      VMax.InternalData[I] :=  BoxHalfSize[I];
+      VMin.Data[I] := -BoxHalfSize[I];
+      VMax.Data[I] :=  BoxHalfSize[I];
     end else
     begin
-      VMin.InternalData[I] :=  BoxHalfSize[I];
-      VMax.InternalData[I] := -BoxHalfSize[I];
+      VMin.Data[I] :=  BoxHalfSize[I];
+      VMax.Data[I] := -BoxHalfSize[I];
     end;
 
   { If VMin is above the plane (plane equation is > 0), then VMax
@@ -2532,13 +2571,13 @@ end;
 
 function CalculateBoundingBox(Verts: TVector3List): TBox3D;
 begin
-  Result := CalculateBoundingBox(PVector3(Verts.List), Verts.Count, 0);
+  Result := CalculateBoundingBox(PVector3(Verts.L), Verts.Count, 0);
 end;
 
 function CalculateBoundingBox(Verts: TVector3List;
   const Transform: TMatrix4): TBox3D;
 begin
-  Result := CalculateBoundingBox(PVector3(Verts.List), Verts.Count, 0,
+  Result := CalculateBoundingBox(PVector3(Verts.L), Verts.Count, 0,
     Transform);
 end;
 
