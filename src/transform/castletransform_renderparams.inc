@@ -29,7 +29,7 @@
       When ShapesRendered is much smaller than ShapesVisible,
       it means that the algorithm for removing invisible scene parts
       works good.
-      This includes per-shape frustum culling (see @link(TCastleScene.FrustumCulling)),
+      This includes per-shape frustum culling (see @link(TCastleScene.ShapeFrustumCulling)),
       distance culling (@link(TCastleScene.DistanceCulling)),
       occlusion culling (see @link(
       TCastleRenderOptions.OcclusionQuery)). }
@@ -266,10 +266,6 @@
       These are parameters to do this. }
     ProjectionBox: TBox3DEvent;
     ProjectionViewportWidth, ProjectionViewportHeight: Single;
-
-    { If we are rendering with shadow volumes, this is non-nil
-      and can be used to render shadow volumes or query what shadow is visible. }
-    ShadowVolumeRenderer: TBaseShadowVolumeRenderer;
 
     constructor Create;
 

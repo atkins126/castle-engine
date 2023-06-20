@@ -267,6 +267,8 @@
 
     { Call UpdateWorldScale on all colliders here and in children. }
     procedure UpdateCollidersWorldScale;
+
+    procedure SetParent(const Value: TCastleTransform);
   protected
     { Returns list of TCastleTransform to render. By default, it just returns @link(List). }
     function GetRenderList(const Params: TRenderParams): TCastleTransformList; virtual;
@@ -491,7 +493,8 @@
       This is @bold(mostly an internal method). You should not need to override
       it during normal engine usage. If you render everything using TCastleScene,
       then rendering shadow volumes is also automatically handled by TCastleScene. }
-    procedure LocalRenderShadowVolume(const Params: TRenderParams); virtual;
+    procedure LocalRenderShadowVolume(const Params: TRenderParams;
+      const ShadowVolumeRenderer: TBaseShadowVolumeRenderer); virtual;
 
     { Can we use simple @link(Translation) to express our whole transformation
       (IOW, we have no scaling, no rotation).
@@ -697,31 +700,51 @@
     { Exchange position of 2 children TCastleTransform instances. }
     procedure Exchange(const Index1, Index2: Integer);
 
-    { Return parent TCastleTransform.
-      It ignores (never returns) parents caused by referencing transform in TCastleTransformReference.
-      If there is (or was, at some point) more than 1 parent (not counting parents
-      caused by TCastleTransformReference) then it may return nil, or any of the existing parents
-      -- it is undefined which exactly.
+    { Parent TCastleTransform.
 
-      In simple cases, one TCastleTransform is just a child of one other
-      TCastleTransform, and then this property returns this obvios parent.
+      In most cases, a TCastleTransform is just a child of one other
+      TCastleTransform, and then this property returns this natural parent.
 
-      In general, one TCastleTransform instance may be used
-      multiple times as a child of other TCastleTransform instances
-      (as long as they are all within the same TCastleViewport).
-      The parent TCastleTransform instances may include TCastleTransformReference
-      (this allows to create multiple references to one TCastleTransform from editor)
-      but in general any parents are allowed
-      (when you use code, you can just insert TCastleTransform as a child of other TCastleTransform,
-      without the need for TCastleTransformReference).
+      Returns @nil if TCastleTransform is not a child of any other TCastleTransform.
 
-      This property indicates the one parent that is @italic(not) TCastleTransformReference.
-      If there are multiple such parents (this is impossible at design-time in editor,
-      but it is possible at runtime if you add/remove TCastleTransform children by code)
-      then this returns @nil or any of existing parents.
+      Setting this property removes us from old parent,
+      and adds to the new one. The local transformation (translation, rotation, scale)
+      doesn't change, so changing parent may change the effective (world)
+      transformation of the object.
 
-      It is @nil if this is just the root transform, not added to any parent. }
-    property Parent: TCastleTransform read FParent;
+      In rare cases the child can have multiple parents. The behavior is then:
+
+      @unorderedList(
+        @item(
+          It ignores (never returns) parents caused by referencing transform in
+          TCastleTransformReference.)
+
+        @item(
+          If there is (or was, at some point) more than 1 parent (not counting parents
+          caused by TCastleTransformReference) then it may return nil, or any of
+          the existing parents -- it is undefined which exactly.
+
+          In general, one TCastleTransform instance may be used
+          multiple times as a child of other TCastleTransform instances
+          (as long as they are all within the same TCastleViewport).
+          The parent TCastleTransform instances may include TCastleTransformReference
+          (this allows to create multiple references to one TCastleTransform from editor)
+          but in general any parents are allowed
+          (when you use code, you can just insert TCastleTransform as a child of other TCastleTransform,
+          without the need for TCastleTransformReference).
+
+          This property indicates the one parent that is @italic(not) TCastleTransformReference.
+          If there are multiple such parents (this is impossible at design-time in editor,
+          but it is possible at runtime if you add/remove TCastleTransform children by code)
+          then this returns @nil or any of existing parents.
+        )
+
+        @item(
+          Setting is not allowed if child has (or ever had) multiple parents.
+          The behavior is undefined.
+        )
+      ) }
+    property Parent: TCastleTransform read FParent write SetParent;
 
     {$ifdef FPC}property UniqueParent: TCastleTransform read FParent; deprecated 'use Parent';{$endif}
 
@@ -835,13 +858,13 @@
     { Render shadow quads for all the things rendered by @link(Render).
       This is done only if @link(Exists) and @link(CastShadows).
 
-      It does shadow volumes culling inside.
-      Params.ShadowVolumeRenderer is guaranteed to be non-nil
-      and have TGLShadowVolumeRenderer.FrustumCullingInit already called.
+      It does shadow volumes culling inside (so ShadowVolumeRenderer should
+      have FrustumCullingInit already initialized).
 
       Params.Transform,InverseTransform,TransformIdentity describe the transformation,
       just like for @link(Render). }
-    procedure RenderShadowVolume(const Params: TRenderParams);
+    procedure RenderShadowVolume(const Params: TRenderParams;
+      const ShadowVolumeRenderer: TBaseShadowVolumeRenderer);
 
     { Prepare resources, making various methods (like rendering and such)
       to execute fast.
@@ -2603,14 +2626,15 @@ begin
   end;
 end;
 
-procedure TCastleTransform.LocalRenderShadowVolume(const Params: TRenderParams);
+procedure TCastleTransform.LocalRenderShadowVolume(const Params: TRenderParams;
+  const ShadowVolumeRenderer: TBaseShadowVolumeRenderer);
 var
   I: Integer;
 begin
   if Exists and CastShadows then
   begin
     for I := 0 to List.Count - 1 do
-      List[I].RenderShadowVolume(Params);
+      List[I].RenderShadowVolume(Params, ShadowVolumeRenderer);
   end;
 end;
 
@@ -3314,7 +3338,8 @@ begin
     RenderContext.DepthRange := SavedDepthRange;
 end;
 
-procedure TCastleTransform.RenderShadowVolume(const Params: TRenderParams);
+procedure TCastleTransform.RenderShadowVolume(const Params: TRenderParams;
+  const ShadowVolumeRenderer: TBaseShadowVolumeRenderer);
 var
   T: TVector3;
   OldParamsTransform, OldParamsInverseTransform: PMatrix4;
@@ -3326,7 +3351,7 @@ begin
   T := Translation;
   if FOnlyTranslation and T.IsZero then
   begin
-    LocalRenderShadowVolume(Params);
+    LocalRenderShadowVolume(Params, ShadowVolumeRenderer);
   end else
   begin
     { TODO: This is a copy-paste of transformation algorithm from TCastleTransform.Render. }
@@ -3362,7 +3387,7 @@ begin
       // 2x slower: NewFrustumValue := NewFrustumValue.Transform(InverseTransform);
     end;
 
-    LocalRenderShadowVolume(Params);
+    LocalRenderShadowVolume(Params, ShadowVolumeRenderer);
 
     { Restore OldXxx values.
       They can be restored fast, thanks to using pointers to matrix/frustum. }
@@ -4234,6 +4259,17 @@ begin
     RBody := FindBehavior(TCastleRigidBody) as TCastleRigidBody;
     if RBody <> nil then
       RBody.UpdateExist;
+  end;
+end;
+
+procedure TCastleTransform.SetParent(const Value: TCastleTransform);
+begin
+  if Parent <> Value then
+  begin
+    if Parent <> nil then
+      Parent.Remove(Self);
+    if Value <> nil then
+      Value.Add(Self);
   end;
 end;
 
