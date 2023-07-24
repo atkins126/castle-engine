@@ -56,6 +56,20 @@ uses // FPC and LCL units
   CastleScriptParser, CastleInternalLclDesign, CastleTerrain, CastleLog,
   CastleEditorAccess, CastleRenderOptions, CastleThirdPersonNavigation;
 
+{ Wrap given floating-point expression in CastleScript in "deg(...)".
+  If it's already wrapped, leave it as-is.}
+function WrapDegIfNeeded(const FloatExpression: String): String;
+begin
+  if IsPrefix('deg', Trim(FloatExpression), true) then
+    { If user explicitly left "deg(" marker, that's OK, leave it. }
+    Result := FloatExpression
+  else
+    { If user deleted "deg(" marker, interpret result as degrees
+      *anyway*. This is more user-friendly, Blender and Godot also do
+      it like this. }
+    Result := 'deg(' + FloatExpression + ')';
+end;
+
 {$define read_implementation}
 {$I castlepropedits_url.inc}
 
@@ -143,6 +157,10 @@ begin
   {$endif}
   RegisterPropertyEditor(TypeInfo(Single), TCastleVector4RotationPersistent, 'W',
     TCastleFloatRotationPropertyEditor);
+  RegisterPropertyEditor(TypeInfo(Single), TCastleImagePersistent, 'Rotation',
+    TCastleFloatRotationPropertyEditor);
+  RegisterPropertyEditor(TypeInfo(Single), TCastleImageControl, 'Rotation',
+    TCastleFloatRotationPropertyEditor);
 
   { Handle using TCastleRegionEditor.
     Note: TBorder rule with 'ProtectedSides' name is registered
@@ -174,6 +192,8 @@ begin
   RegisterPropertyEditor(TypeInfo(TCastleVector3Persistent), TCastleBoxCollider, 'SizePersistent',
     TScalePropertyEditor);
   RegisterPropertyEditor(TypeInfo(TCastleVector2Persistent), TCastlePlane, 'SizePersistent',
+    TSize2DPropertyEditor);
+  RegisterPropertyEditor(TypeInfo(TCastleVector2Persistent), TCastleImageTransform, 'SizePersistent',
     TSize2DPropertyEditor);
   RegisterPropertyEditor(TypeInfo(TCastleVector3Persistent), nil, '',
     TCastleVector3PropertyEditor);
