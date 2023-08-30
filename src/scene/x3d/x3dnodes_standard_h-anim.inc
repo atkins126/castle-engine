@@ -17,6 +17,7 @@
 {$ifdef read_interface}
   THAnimSegmentNode = class;
   THAnimSiteNode = class;
+  THAnimMotionNode = class;
 
   { Alter the shape of coordinate-based geometry within parent H-Anim nodes.
     For example, different HAnimDisplacer may be used for each facial expression. }
@@ -52,7 +53,6 @@
     var
       FTransformFunctionality: THAnimHumanoidNodeTransformFunctionality;
       VertexJoints: TVertexJointsList;
-      WarningCountSkinCoordReferences: Cardinal;
     procedure AddJoint(Node: TX3DNode);
   protected
     function DirectEnumerateActive(Func: TEnumerateChildrenFunction): Pointer; override;
@@ -96,6 +96,8 @@
       AnimateSkinTransform: TMatrix4;
       RestCenter: TVector3;
   private
+    WarningSkinCoordReferences: Boolean;
+
     { Animate point, based on it's rest position.
 
       We used, at one point, to apply here a relative change since last position.
@@ -143,6 +145,17 @@
     function TransformationChange: TNodeTransformationChange; override;
 
   {$I auto_generated_node_helpers/x3dnodes_hanimsegment.inc}
+  end;
+
+  { Motion animation of humanoid (THAnimHumanoidNode) characters.
+    Raw motion data, for example, motion capture data, details
+    the number of frames, the frame display time, and the parameter values
+    for the motion from each channel at each frame.
+
+    @bold(This note is not (yet) implemented in Castle Game Engine).
+    We parse it, but we don't act on the information in any way. }
+  THAnimMotionNode = class(TAbstractChildNode)
+  {$I auto_generated_node_helpers/x3dnodes_hanimmotion.inc}
   end;
 
   { An attachment point of an animated humanoid,
@@ -335,8 +348,6 @@ procedure THAnimHumanoidNode.ParseAfter(Reader: TX3DReaderNames);
   end;
 
   procedure CalculateVertexJoints;
-  const
-    MaxWarningCountSkinCoordReferences = 10;
   var
     SkinCoord: TVector3List;
     I, J: Integer;
@@ -370,13 +381,14 @@ procedure THAnimHumanoidNode.ParseAfter(Reader: TX3DReaderNames);
             if (CoordIndex < 0) or
                (CoordIndex >= SkinCoord.Count) then
             begin
-              if WarningCountSkinCoordReferences < MaxWarningCountSkinCoordReferences then
+              if not Joint.WarningSkinCoordReferences then
               begin
-                WritelnWarning('X3D', Format('HAnimJoint.skinCoord references not existing coordinate index %d (while we have only %d skin coordinates in HAnimHumanoid.skin)',
-                  [CoordIndex, SkinCoord.Count]));
-                Inc(WarningCountSkinCoordReferences);
-                if WarningCountSkinCoordReferences = MaxWarningCountSkinCoordReferences then
-                  WritelnWarning('X3D', 'Further warnings about this HAnimJoint.skinCoord will not be reported, to avoid spamming the log');
+                WritelnWarning('X3D', Format('"%s": skinCoord refers to not existing coordinate index %d (while we have only %d skin coordinates in HAnimHumanoid.skin)', [
+                  Joint.NiceName,
+                  CoordIndex,
+                  SkinCoord.Count
+                ]));
+                Joint.WarningSkinCoordReferences := true;
               end;
               Continue;
             end;
@@ -601,6 +613,7 @@ begin
     THAnimDisplacerNode,
     THAnimHumanoidNode,
     THAnimJointNode,
+    THAnimMotionNode,
     THAnimSegmentNode,
     THAnimSiteNode
   ]);
