@@ -1,6 +1,6 @@
 ﻿{%MainUnit castletiledmap.pas}
 {
-  Copyright 2023-2023 Michalis Kamburelis.
+  Copyright 2023-2024 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -36,6 +36,7 @@ type
     FForceTilesetSpacing: Boolean;
     FData: TCastleTiledMapData;
     FUrl: String;
+    FUrlMonitoring: TUrlMonitoring;
     FSmoothScaling, FSmoothScalingSafeBorder: Boolean;
     FScene: TCastleScene;
     FLayers: TLayers;
@@ -49,6 +50,7 @@ type
   public
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
+    procedure BeforeDestruction; override;
     function PropertySections(const PropertyName: String): TPropertySections; override;
 
     procedure PlayAnimations;
@@ -138,7 +140,16 @@ type
 
       Note that changing this when map is loaded reloads it,
       and automatically starts animations.
-      You can stop them with @link(StopAnimations). }
+      You can stop them with @link(StopAnimations).
+
+      TODO:
+      There is an alternative way to hide/show layers: you can read/write
+      @code(MyMap.Data.Layers[<layer-index>].Exists) property.
+      However, we do not encourage using the @code(Data) property now,
+      and we plan to add a better layer API,
+      see https://castle-engine.io/roadmap#tiled_layers .
+      So eventually, we want to allow just using @code(MyMap.Layers[<layer-index>].Exists)
+      to hide/show layers. }
     property Layers: TLayers read FLayers write SetLayers default AllLayers;
   end;
 
@@ -163,12 +174,20 @@ begin
   FLayers := AllLayers;
 
   UpdateSmoothScaling;
+
+  FUrlMonitoring.Init({$ifdef FPC}@{$endif} ReloadMap);
 end;
 
 destructor TCastleTiledMap.Destroy;
 begin
   FreeAndNil(FScene);
   FreeAndNil(FData);
+  inherited;
+end;
+
+procedure TCastleTiledMap.BeforeDestruction;
+begin
+  FUrlMonitoring.Finish(FUrl);
   inherited;
 end;
 
@@ -187,7 +206,7 @@ procedure TCastleTiledMap.SetUrl(const Value: String);
 begin
   if FUrl <> Value then
   begin
-    FUrl := Value;
+    FUrlMonitoring.ChangeUrl(FUrl, Value);
     try
       ReloadMap;
     except

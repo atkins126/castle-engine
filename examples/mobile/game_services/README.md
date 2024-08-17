@@ -1,5 +1,7 @@
 # Game services (achievements, leaderboards, save games...) with Google Play Games and Apple Game Center
 
+Download the game for Android from Google Play: https://play.google.com/store/apps/details?id=io.castleengine.mobile.game.services
+
 Records and shows achievements and leaderboard scores using `CastleGameService`. This uses:
 
 - Google Play Games (on Android)
@@ -18,8 +20,10 @@ Using [Castle Game Engine](https://castle-engine.io/).
 
 Compile by:
 
-- [CGE editor](https://castle-engine.io/manual_editor.php). Just use menu item _"Compile"_.
+- [CGE editor](https://castle-engine.io/editor). Just use menu items _"Compile"_ or _"Compile And Run"_.
 
 - Or use [CGE command-line build tool](https://castle-engine.io/build_tool). Run `castle-engine compile` in this directory.
 
-- Or use [Lazarus](https://www.lazarus-ide.org/). Open in Lazarus `game_services_demo_standalone.lpi` file and compile / run from Lazarus. Make sure to first register [CGE Lazarus packages](https://castle-engine.io/documentation.php).
+- Or use [Lazarus](https://www.lazarus-ide.org/). Open in Lazarus `game_services_demo_standalone.lpi` file and compile / run from Lazarus. Make sure to first register [CGE Lazarus packages](https://castle-engine.io/lazarus).
+
+- Or use [Delphi](https://www.embarcadero.com/products/Delphi). Open in Delphi `game_services_demo_standalone.dproj` file and compile / run from Delphi. See [CGE and Delphi](https://castle-engine.io/delphi) documentation for details.

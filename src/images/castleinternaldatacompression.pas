@@ -1,5 +1,5 @@
 {
-  Copyright 2023-2023 Michalis Kamburelis.
+  Copyright 2023-2024 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -19,6 +19,8 @@
   to make units like src/fonts/castletexturefont_defaultui.pas
   smaller (faster to compile, and not taking huge space in EXE). }
 unit CastleInternalDataCompression;
+
+{$I castleconf.inc}
 
 interface
 
@@ -272,7 +274,7 @@ begin
     Inc(Buffer);
     while
       (I <= SourceSize) and
-      (PByte(PtrUInt(Buffer + 1))^ = ChunkByte) and
+      (Buffer^ = ChunkByte) and
       (ChunkSize < MaxChunkLength) do
     begin
       Inc(I);

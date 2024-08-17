@@ -1,6 +1,6 @@
 {%MainUnit castlewindow.pas}
 {
-  Copyright 2004-2023 Michalis Kamburelis.
+  Copyright 2004-2024 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -41,7 +41,6 @@ public
 {$ifdef read_application_interface}
 private
   FScreenWidth, FScreenHeight: Integer;
-  FScreenStatusBarHeight: Cardinal;
   procedure WarningToCallback(const Category, S: String);
 {$endif read_application_interface}
 
@@ -194,6 +193,10 @@ begin
   FFullScreenBackend := FFullScreenWanted;
 end;
 
+procedure TCastleWindow.BackendInsideUpdate;
+begin
+end;
+
 { LibraryXxx methods --------------------------------------------------------- }
 
 procedure TCastleWindow.LibraryMouseWheel(const Scroll: Single; const Vertical: boolean);
@@ -296,9 +299,8 @@ begin
     must perform event loop }
 end;
 
-procedure TCastleApplication.QuitWhenNoOpenWindows;
+procedure TCastleApplication.BackendTerminate;
 begin
-  Terminate; // set Terminated := true
 end;
 
 function TCastleApplication.ScreenWidth: integer;
@@ -313,11 +315,6 @@ begin
   if FScreenHeight = 0 then
     WritelnWarning('Window', 'Application.ScreenHeight is queried before window is open, returns zero');
   Result := FScreenHeight;
-end;
-
-function TCastleApplication.ScreenStatusBarScaledHeight: Cardinal;
-begin
-  Result := FScreenStatusBarHeight;
 end;
 
 function TCastleApplication.BackendName: String;
@@ -400,6 +397,14 @@ begin
   end;
 end;
 
+{ Safe border (as 4D vector: top, right, bottom, left) with only
+  a status bar (top) non-zero.
+  This is passed from our Objective-C code on iOS to Pascal now. }
+function SafeBorderWithStatusBar(const StatusBarHeight: Single): TVector4;
+begin
+  Result := Vector4(StatusBarHeight, 0, 0, 0);
+end;
+
 procedure CGEApp_Open(InitialWidth, InitialHeight, InitialStatusBarHeight, ADpi: cUInt32); cdecl;
 begin
   try
@@ -413,13 +418,14 @@ begin
     WritelnLog('Library received CGEApp_Open (window size: %d %d)', [InitialWidth, InitialHeight]);
     Application.FScreenWidth := InitialWidth;
     Application.FScreenHeight := InitialHeight;
-    Application.FScreenStatusBarHeight := InitialStatusBarHeight;
     //Window.FullScreen := true; // TODO: setting fullscreen should work like that 4 lines below. Also, should be default?
     Application.MainWindow.FLeft := 0;
     Application.MainWindow.FTop := 0;
     Application.MainWindow.FWidth := InitialWidth;
     Application.MainWindow.FHeight := InitialHeight;
     Application.MainWindow.Container.Dpi := ADpi;
+    Application.MainWindow.Container.InternalSetSafeBorderScaled(
+      SafeBorderWithStatusBar(InitialStatusBarHeight));
     Application.MainWindow.Open;
   except
     on E: TObject do WritelnWarning('CGEApp_Open', ExceptMessage(E));
@@ -442,7 +448,8 @@ begin
     CheckMainWindow;
     Application.FScreenWidth  := uiViewWidth;
     Application.FScreenHeight := uiViewHeight;
-    Application.FScreenStatusBarHeight := uiStatusBarHeight;
+    Application.MainWindow.Container.InternalSetSafeBorderScaled(
+      SafeBorderWithStatusBar(uiStatusBarHeight));
     Application.MainWindow.DoResize(uiViewWidth, uiViewHeight, false);
   except
     on E: TObject do WritelnWarning('CGEApp_Resize', ExceptMessage(E));
@@ -471,9 +478,9 @@ end;
 procedure CGEApp_Update; cdecl;
 begin
   try
-    Application.DoApplicationUpdate;
+    ApplicationProperties._Update;
     Application.FOpenWindows.DoUpdate;
-    Application.MaybeDoTimer;
+    ApplicationProperties._UpdateEnd;
   except
     on E: TObject do WritelnWarning('CGEApp_Update', ExceptMessage(E));
   end;

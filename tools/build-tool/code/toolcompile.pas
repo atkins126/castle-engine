@@ -1,5 +1,5 @@
 {
-  Copyright 2014-2023 Michalis Kamburelis.
+  Copyright 2014-2024 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -101,86 +101,6 @@ var
   FpcVersionForIPhoneSimulator: String = 'auto';
 
 const
-  { Paths with units and include files that are for all OSes and all compilers.
-
-    Note:
-
-    - We don't bother trying to have separate include dirs (.inc) and units (.pas).
-      We just pass the same paths for both includes and units, this is simpler.
-
-    - We pass all paths, even system-specific, regardless of the target
-      OS/architecture.
-
-      We tried smarter approach in the past (such that you could have e.g.
-      "windows/castle_system_specific.inc" and "unix/castle_system_specific.inc",
-      and compiler recognized what to do on [$I castle_system_specific.inc]
-      based on include paths)...
-      but it was not really friendly for Lazarus lpk.
-
-      So it is simpler to just name all includes and units differently,
-      even across system-specific dirs. }
-
-  EnginePaths: array [0..42] of String = (
-    'base',
-    'common_includes',
-    'base/android',
-    'base/windows',
-    'base/unix',
-    'base_rendering',
-    'base_rendering/glsl/generated-pascal',
-    'fonts',
-    'window',
-    'window/gtk',
-    'window/windows',
-    'window/unix',
-    'window/deprecated_units',
-    'images',
-    'transform',
-    'scene',
-    'scene/glsl/generated-pascal',
-    'scene/x3d',
-    'scene/load',
-    'scene/load/spine',
-    'scene/load/md3',
-    'scene/load/collada',
-    'scene/load/pasgltf',
-    'audio',
-    'audio/fmod',
-    'audio/openal',
-    'audio/ogg_vorbis',
-    'files',
-    'files/indy',
-    'castlescript',
-    'ui',
-    'ui/windows',
-    'services',
-    'physics',
-    'physics/kraft',
-    'deprecated_units',
-    { Vampyre Imaging Library }
-    'vampyre_imaginglib/src/Source',
-    'vampyre_imaginglib/src/Source/JpegLib',
-    'vampyre_imaginglib/src/Source/ZLib',
-    'vampyre_imaginglib/src/Extras/Extensions',
-    'vampyre_imaginglib/src/Extensions/J2KObjects',
-    'vampyre_imaginglib/src/Extensions/LibTiff',
-    'vampyre_imaginglib/src/Extensions'
-  );
-
-  { Additional include/units paths, only for Delphi. }
-  EnginePathsDelphi: array [0..2] of String = (
-    'delphi',
-    'compatibility/delphi-only',
-    'compatibility/delphi-only/fcl-json'
-  );
-
-  { Paths for library (object) files.
-    For FPC these are passed using -Fl. }
-  EngineLibraryPaths: array [0..1] of String = (
-    'vampyre_imaginglib/src/Extensions/J2KObjects',
-    'vampyre_imaginglib/src/Extensions/LibTiff/Compiled'
-  );
-
   CompilationModeToStr: array [TCompilationMode] of string = (
     'release',
     'valgrind',
@@ -191,6 +111,7 @@ implementation
 
 uses SysUtils, Process,
   CastleUtils, CastleLog, CastleFilesUtils, CastleFindFiles,
+  CastleInternalTools,
   ToolCommonUtils, ToolUtils, ToolFpcVersion, ToolCompilerInfo;
 
 { TCompilerOptions ----------------------------------------------------------- }
@@ -393,9 +314,11 @@ begin
     { Occur without -vb }
     IsPrefix('generics.collections.pas(', LineLower, false) or
     IsPrefix('generics.dictionaries.inc(', LineLower, false) or
+    IsPrefix('generics.defaults.pas(', LineLower, false) or
     { Occur with -vb }
     (Pos('generics.collections.ppu:generics.collections.pas(', LineLower) <> 0) or
     (Pos('generics.collections.ppu:generics.dictionaries.inc(', LineLower) <> 0) or
+    (Pos('generics.defaults.ppu:generics.defaults.pas(', LineLower) <> 0) or
     { Others }
     IsSuffix('warning: section "__datacoal_nt" is deprecated', LineLower, false) or
     IsSuffix('note: change section name to "__data"', LineLower, false) or
@@ -429,9 +352,6 @@ var
     begin
       for S in EnginePaths do
         AddEnginePath(S);
-
-      if (not FpcVer.AtLeast(3, 1, 1)) or FpcVer.IsCodeTyphon then
-        AddEnginePath('compatibility/generics.collections/src');
 
       { Do not add castle-fpc.cfg.
         Instead, rely on code below duplicating castle-fpc.cfg logic
@@ -739,6 +659,9 @@ begin
         WritelnWarning('Disabling optimizations, because they are buggy on Aarch64 with older FPC. Upgrade to FPC >= 3.2.2.');
       end else
         FpcOptions.Add('-O2');
+        // Not using -O3: Fails badly on 64-bit Raspberry Pi (Linux/Aarch64),
+        // at TTestCastleComponentSerialize.TestCustomSerialization
+        //FpcOptions.Add('-O3');
       FpcOptions.Add('-dRELEASE');
     end;
 
@@ -756,13 +679,19 @@ begin
         end;
       cmDebug:
         begin
-          FpcOptions.Add('-Cr');
-          FpcOptions.Add('-Co');
-          FpcOptions.Add('-Sa');
-          FpcOptions.Add('-CR');
-          FpcOptions.Add('-g');
-          FpcOptions.Add('-gl');
+          FpcOptions.Add('-Cr'); // Range checking, see https://github.com/michaliskambi/modern-pascal-introduction/wiki/What-are-range-and-overflow-checks-(and-errors)-in-Pascal
+          FpcOptions.Add('-Co'); // Overflow checking, see https://github.com/michaliskambi/modern-pascal-introduction/wiki/What-are-range-and-overflow-checks-(and-errors)-in-Pascal
+          FpcOptions.Add('-Sa'); // Assertions
+          FpcOptions.Add('-CR'); // Verify method calls
+          FpcOptions.Add('-g');  // Debug info (automatic), for debuggers
+          FpcOptions.Add('-gl'); // Line info (in backtraces)
           FpcOptions.Add('-dDEBUG');
+          { Disable -Ct (Stack checking) added to fpc.cfg in default
+            fpcupdeluxe installation when DEBUG is defined.
+            Because it crashes when application is run on iPhone,
+            at least with FPC 3.2.2. }
+          if IsIOS then
+            FpcOptions.Add('-Ct-');
         end;
       {$ifndef COMPILER_CASE_ANALYSIS}
       else raise EInternalError.Create('CompileFpc: Mode?');
@@ -807,10 +736,10 @@ begin
       //FpcOptions.Add('-CaEABIHF');
     end;
 
-    if Options.DetectMemoryLeaks then
+    if Options.DetectMemoryLeaks then // see https://castle-engine.io/memory_leaks
     begin
-      FpcOptions.Add('-gl');
-      FpcOptions.Add('-gh');
+      FpcOptions.Add('-gl'); // HeapTrc
+      FpcOptions.Add('-gh'); // LineInfo
     end;
 
     AddIOSOptions;

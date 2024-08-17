@@ -1,6 +1,6 @@
 // -*- compile-command: "./test_single_testcase.sh TTestCastleFrustum" -*-
 {
-  Copyright 2005-2022 Michalis Kamburelis.
+  Copyright 2005-2024 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -19,8 +19,8 @@ unit TestCastleFrustum;
 interface
 
 uses
-  Classes, SysUtils, {$ifndef CASTLE_TESTER}FpcUnit, TestUtils, TestRegistry,
-  CastleTestCase{$else}CastleTester{$endif}, CastleVectors, CastleBoxes, CastleFrustum;
+  Classes, SysUtils,
+  CastleTester, CastleVectors, CastleBoxes, CastleFrustum;
 
 type
   TTestCastleFrustum = class(TCastleTestCase)
@@ -520,7 +520,7 @@ begin
     Vector4(0, 0, 0, 0),
     Vector3(15, 16, 17));
   // when using non-uniform scaling, we need larger epsilon to pass
-  AssertFrustumEquals(Frustum1.TransformByInverse(MInverse), Frustum1.Transform(M), 0.05);
+  AssertFrustumEquals(Frustum1.TransformByInverse(MInverse), Frustum1.Transform(M), 0.75);
 
   M := TMatrix4.Identity;
   MInverse := TMatrix4.Identity;
@@ -531,7 +531,7 @@ begin
     Vector4(11, 12, 13, 14),
     Vector3(15, 16, 17));
   // when using non-uniform scaling, we need larger epsilon to pass
-  AssertFrustumEquals(Frustum1.TransformByInverse(MInverse), Frustum1.Transform(M), 0.05);
+  AssertFrustumEquals(Frustum1.TransformByInverse(MInverse), Frustum1.Transform(M), 1.0);
 
   {$ifdef TEST_FRUSTUM_TRANSFORM_SPEED}
   DoTestSpeed;

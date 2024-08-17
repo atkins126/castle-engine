@@ -1,6 +1,6 @@
 {%MainUnit castleuicontrols.pas}
 {
-  Copyright 2010-2023 Michalis Kamburelis.
+  Copyright 2010-2024 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -45,55 +45,59 @@
     type
       TFingerIndexCaptureMap = {$ifdef FPC}specialize{$endif} TDictionary<TFingerIndex, TCastleUserInterface>;
     var
-    FOnOpen, FOnClose: TContainerEvent;
-    FOnOpenObject, FOnCloseObject: TContainerObjectEvent;
-    FOnBeforeRender, FOnRender: TContainerEvent;
-    FOnResize: TContainerEvent;
-    FOnPress, FOnRelease: TInputPressReleaseEvent;
-    FOnMotion: TInputMotionEvent;
-    FOnUpdate: TContainerEvent;
-    FFocus, FNewFocus: TCastleUserInterfaceList;
-    { Capture controls, for each FingerIndex.
-      The values in this map are never nil. }
-    FCaptureInput: TFingerIndexCaptureMap;
-    FForceCaptureInput: TCastleUserInterface;
-    FTooltipDelay: Single;
-    FTooltipDistance: Cardinal;
-    FTooltipPosition: TVector2;
-    FTooltipParent: TCastleUserInterface; // @nil if do not display
-    HasLastPositionForTooltip: boolean;
-    LastPositionForTooltip: TVector2;
-    LastPositionForTooltipTime: TTimerResult;
-    Mouse3d: T3DConnexionDevice;
-    Mouse3dPollTimer: Single;
-    FDpi: Single;
-    FUIScaling: TUIScaling;
-    FUIReferenceWidth: Single;
-    FUIReferenceHeight: Single;
-    FUIExplicitScale: Single;
-    FUIScale: Single;
-    FFps: TFramesPerSecond;
-    FPressed: TKeysPressed;
-    FMousePressed: TCastleMouseButtons;
-    FMouseLookIgnoreNextMotion: Boolean;
-    FMouseLookWaitingForMiddle: Boolean;
-    FMouseLookMotionToSubtract: TVector2;
-    FFocusAndMouseCursorValid: boolean;
-    FOverrideCursor: TMouseCursor;
-    FDefaultFont: TCastleAbstractFont;
-    FContext: TRenderContext;
-    FBackgroundEnable: Boolean;
-    FBackgroundColor: TCastleColor;
-    FInputInspector: TInputInspector;
-    FInspector: TCastleUserInterface; //< always TCastleInspector
+      FOnOpen, FOnClose: TContainerEvent;
+      FOnOpenObject, FOnCloseObject: TContainerObjectEvent;
+      FOnBeforeRender, FOnRender: TContainerEvent;
+      FOnResize: TContainerEvent;
+      FOnPress, FOnRelease: TInputPressReleaseEvent;
+      FOnMotion: TInputMotionEvent;
+      FOnUpdate: TContainerEvent;
+      FFocus, FNewFocus: TCastleUserInterfaceList;
+      { Capture controls, for each FingerIndex.
+        The values in this map are never nil. }
+      FCaptureInput: TFingerIndexCaptureMap;
+      FForceCaptureInput: TCastleUserInterface;
+      FForceCaptureInputObserver: TFreeNotificationObserver;
+      FTooltipDelay: Single;
+      FTooltipDistance: Cardinal;
+      FTooltipPosition: TVector2;
+      FTooltipParent: TCastleUserInterface; // @nil if do not display
+      HasLastPositionForTooltip: Boolean;
+      LastPositionForTooltip: TVector2;
+      LastPositionForTooltipTime: TTimerResult;
+      Mouse3d: T3DConnexionDevice;
+      Mouse3dPollTimer: Single;
+      FDpi: Single;
+      FUIScaling: TUIScaling;
+      FUIReferenceWidth: Single;
+      FUIReferenceHeight: Single;
+      FUIExplicitScale: Single;
+      FUIScale: Single;
+      FFps: TFramesPerSecond;
+      FPressed: TKeysPressed;
+      FMousePressed: TCastleMouseButtons;
+      FMouseLookIgnoreNextMotion: Boolean;
+      FMouseLookWaitingForMiddle: Boolean;
+      FMouseLookMotionToSubtract: TVector2;
+      FFocusAndMouseCursorValid: Boolean;
+      FOverrideCursor: TMouseCursor;
+      FDefaultFont: TCastleAbstractFont;
+      FContext: TRenderContext;
+      FBackgroundEnable: Boolean;
+      FBackgroundColor: TCastleColor;
+      FInspector: TCastleUserInterface; //< always TCastleInspector
+      // SafeBorder, without UIScale applied, in CSS order (top, right, bottom, left)
+      FSafeBorderScaled: TVector4;
+      FSafeBorder: TBorder;
+      FOnSafeBorderChanged: TNotifyEvent;
 
     function GetView: TCastleView;
     procedure SetView(const Value: TCastleView);
     function GetFrontView: TCastleView;
     function GetViewStack(const Index: Integer): TCastleView;
 
-    function UseForceCaptureInput: boolean;
-    function TryGetFingerOfControl(const C: TCastleUserInterface; out Finger: TFingerIndex): boolean;
+    function UseForceCaptureInput: Boolean;
+    function TryGetFingerOfControl(const C: TCastleUserInterface; out Finger: TFingerIndex): Boolean;
     procedure SetDpi(const Value: Single);
     procedure SetUIScaling(const Value: TUIScaling);
     procedure SetUIReferenceWidth(const Value: Single);
@@ -116,12 +120,18 @@
     procedure SetInspectorKey(const Value: TKey);
     { Create / destroy FInspector. }
     procedure ToggleInspector;
+    procedure ForceCaptureInputFreeNotification(const Sender: TFreeNotificationObserver);
+    function MessageReceived(const Received: TCastleStringList;
+      const ReceivedStream: TMemoryStream): Boolean;
   private
-    FViewStack: TCastleViewList;
-    FDisableStackChange: Cardinal;
-    FControls: TInternalChildrenControls;
+    var
+      FViewStack: TCastleViewList;
+      FDisableStackChange: Cardinal;
+      FControls: TInternalChildrenControls;
+    class var
+      FInputInspector: TInputInspector;
     procedure ControlsVisibleChange(const Sender: TCastleUserInterface;
-      const Changes: TCastleUserInterfaceChanges; const ChangeInitiatedByChildren: boolean);
+      const Changes: TCastleUserInterfaceChanges; const ChangeInitiatedByChildren: Boolean);
     class procedure RenderControlPrepare(const ViewportRect: TRectangle);
     { Called when the control C is destroyed or just removed from Controls list. }
     procedure DetachNotification(const C: TCastleUserInterface);
@@ -177,6 +187,45 @@
       move mouse around, and press "5" (this does "MousePosition := window middle"). }
     function SettingMousePositionCausesMotion: Boolean; virtual;
   public
+    var
+      { Optimize rendering of user interface.
+        This activates batching of TDrawableImage around whole rendering,
+        and TDrawableImage is used for most UI rendering (labels, images).
+
+        Where it works, where it doesn't:
+        The automatic batching offered by @link(TDrawableImage.BatchingBegin)
+        and @link(TDrawableImage.BatchingEnd) gives a benefit
+        when the same TDrawableImage is rendered multiple times in a row,
+        with the same parameters. Consider these examples:
+
+        @unorderedList(
+          @item(The batching helps if you have multiple TCastleImageControl
+            (rendered one after another) with the same image.
+
+            Note that by default TCastleImageControl
+            (actually TCastleImagePersistent underneath)
+            does caching so same image URL -> same TDrawableImage instance.
+            This is good for batching.
+          )
+
+          @item(The batching helps if you have multiple TCastleLabel instances
+            rendered one after another,
+            and/or they have multiline text,
+            all using the same font.
+          )
+
+          @item(The batching @italic(will not help) for typical TCastleButton,
+            as a button is typically some image (background) + some text,
+            so the TDrawableImage drawn switches between background / text,
+            and nothing gets batched.
+          )
+        )
+
+        Observe @code(TDrawableImage.Statistics.ToString) to actually measure
+        how much you gain by this.
+        See example @code(examples/user_interface/ui_batching/). }
+      UserInterfaceBatching: Boolean;
+
     const
       DefaultBackgroundColor: TVector4 = (X: 0.1; Y: 0.1; Z: 0.1; W: 1);
 
@@ -200,21 +249,28 @@
       @link(EventSensorRotation),
       @link(EventSensorTranslation).
 
+      InitializedContextsCount should specify the number of initialized contexts
+      at this point. This is always >= 1 since the current context is always
+      initialized at the point of this call.
+      So for EventOpen, InitializedContextsCount = 1 means we initialize
+      1st context, and for EventClose, InitializedContextsCount = 1 means we
+      finalize last context.
+
       @groupBegin }
-    procedure EventOpen(const OpenWindowsCount: Cardinal); virtual;
-    procedure EventClose(const OpenWindowsCount: Cardinal); virtual;
-    function EventPress(const Event: TInputPressRelease): boolean; virtual;
-    function EventRelease(const Event: TInputPressRelease): boolean; virtual;
+    procedure EventOpen(const InitializedContextsCount: Cardinal); virtual;
+    procedure EventClose(const InitializedContextsCount: Cardinal); virtual;
+    function EventPress(const Event: TInputPressRelease): Boolean; virtual;
+    function EventRelease(const Event: TInputPressRelease): Boolean; virtual;
     procedure EventUpdate; virtual;
     procedure EventMotion(const Event: TInputMotion); virtual;
-    function AllowSuspendForInput: boolean;
+    function AllowSuspendForInput: Boolean;
     procedure EventBeforeRender; virtual;
     procedure EventRender; virtual;
     procedure EventResize; virtual;
-    function EventJoyAxisMove(const JoyID, Axis: Byte): boolean; virtual;
-    function EventJoyButtonPress(const JoyID, Button: Byte): boolean; virtual;
-    function EventSensorRotation(const X, Y, Z, Angle: Double; const SecondsPassed: Single): boolean; virtual;
-    function EventSensorTranslation(const X, Y, Z, Length: Double; const SecondsPassed: Single): boolean; virtual;
+    function EventJoyAxisMove(const JoyID, Axis: Byte): Boolean; virtual;
+    function EventJoyButtonPress(const JoyID, Button: Byte): Boolean; virtual;
+    function EventSensorRotation(const X, Y, Z, Angle: Double; const SecondsPassed: Single): Boolean; virtual;
+    function EventSensorTranslation(const X, Y, Z, Length: Double; const SecondsPassed: Single): Boolean; virtual;
     { @groupEnd }
 
     { Dots (pixels) per inch. Describes how many pixels fit on a physical inch.
@@ -238,8 +294,7 @@
     { @exclude }
     class function InternalCalculateUIScale(
       const AUIScaling: TUIScaling;
-      const AUIReferenceWidth: Single;
-      const AUIReferenceHeight: Single;
+      AUIReferenceWidth, AUIReferenceHeight: Single;
       const AUIExplicitScale: Single;
       const ADpi, AWidth, AHeight: Single): Single;
 
@@ -263,6 +318,15 @@
       is last on this list. }
     property Focus: TCastleUserInterfaceList read FFocus;
 
+    { First control that receives input events, determined by @link(Focus) list
+      and @link(ForceCaptureInput).
+      @nil if none.
+
+      Be careful when using this: most logic should account for the fact
+      that multiple controls may be focused, that's why @link(Focus) is a list.
+      Use this only when you need to know the front-most focused control. }
+    function FocusFront: TCastleUserInterface;
+
     { Redraw the contents of of this window, at the nearest suitable time.
       This method does not redraw immediately
       (it does not call @link(EventBeforeRender) and @link(EventRender) inside),
@@ -272,33 +336,40 @@
     procedure Invalidate; virtual;
 
     { Is the OpenGL context initialized. }
-    function GLInitialized: boolean; virtual;
+    function GLInitialized: Boolean; virtual;
 
     { Container size, in pixels.
       This is expressed in real device pixels.
       Prefer using @link(UnscaledWidth) instead of this. @link(UnscaledWidth)
       is more natural when you use UI scaling (@link(UIScaling)),
       and it's simply equal to @name when UI scaling is not used. }
-    function Width: Integer; virtual; abstract;
+    function PixelsWidth: Integer; virtual; abstract;
 
     { Container size, in pixels.
       This is expressed in real device pixels.
       Prefer using @link(UnscaledHeight) instead of this. @link(UnscaledHeight)
       is more natural when you use UI scaling (@link(UIScaling)),
       and it's simply equal to @name when UI scaling is not used. }
-    function Height: Integer; virtual; abstract;
+    function PixelsHeight: Integer; virtual; abstract;
 
     { Container size, in pixels.
       This is expressed in real device pixels, using @link(Width) and @link(Height).
       Prefer using @link(UnscaledRect) instead of this. @link(UnscaledRect)
       is more natural when you use UI scaling (@link(UIScaling)),
       and it's simply equal to @name when UI scaling is not used. }
-    function Rect: TRectangle; virtual;
+    function PixelsRect: TRectangle; virtual;
+
+    function Width: Integer; deprecated 'use PixelsWidth or UnscaledWidth, depending on what you need; for backward compatibility, "Width" is equal to "PixelsWidth" now, but it will change to "UnscaledWidth" in the future';
+    function Height: Integer; deprecated 'use PixelsHeight or UnscaledHeight, depending on what you need; for backward compatibility, "Height" is equal to "PixelsHeight" now, but it will change to "UnscaledHeight" in the future';
+    function Rect: TRectangle; deprecated 'use PixelsRect or UnscaledRect, depending on what you need; for backward compatibility, "Rect" is equal to "PixelsRect" now, but it will change to "UnscaledRect" in the future';
 
     { Translucent status bar height in the container, in pixels.
       This is expressed in real device pixels.
-      Prefer using @link(StatusBarHeight) instead of this. }
-    function ScaledStatusBarHeight: Cardinal; virtual;
+
+      Prefer using @link(SafeBorder) instead of this,
+      @link(SafeBorder) accounts for all 4 sides and
+      is in size accounting for UI scaling. }
+    function ScaledStatusBarHeight: Cardinal; deprecated 'use SafeBorder';
 
     { Container width as seen by controls with UI scaling.
       In other words, this is the real @link(Width) with UI scaling
@@ -332,8 +403,13 @@
 
       Status bar occupies the top part of the container height. Invisible
       status bar returns height equal zero.
+
+      Prefer using @link(SafeBorder) instead of this,
+      @link(SafeBorder) accounts for all 4 sides and
+      (just like this) is also in size accounting for UI scaling.
+
       @seealso UnscaledWidth }
-    function StatusBarHeight: Single;
+    function StatusBarHeight: Single; deprecated 'use SafeBorder';
 
     { Current mouse position.
       See @link(TTouch.Position) for a documentation how this is expressed. }
@@ -349,7 +425,7 @@
 
     { Is the window focused now, which means that keys/mouse events
       are directed to this window. }
-    function Focused: boolean; virtual;
+    function Focused: Boolean; virtual;
 
     { Keys currently pressed. }
     property Pressed: TKeysPressed read FPressed;
@@ -623,13 +699,28 @@
       method helps. }
     procedure ReleaseCapture(const C: TCastleUserInterface);
 
-    { Load visual settings from an XML file.
+    { Load application settings from an XML file.
       See https://castle-engine.io/manual_castle_settings.php
       for a documentation of the file format.
 
       This loads UIScaling, UIReferenceWidth, UIReferenceHeight, DefaultFont.
-      In the future, it may load more things configurable by the CGE editor
-      and CastleSettings.xml file. }
+      It allows "warms the cache" by loading some assets into it -- which
+      means that actually instatiating them at runtime will be faster.
+
+      Note: It is allowed to call this at any moment, even before the rendering
+      context is initialized. That's because it makes sense in some cases:
+      e.g. if using with LCL / FMX form, it is natural to call this
+      in TForm.OnCreate callback, without the additional complexity of
+      waiting for context (e.g. by waiting for GLContextOpen call on some
+      TCastleUserInterface instance).
+
+      We still recommend to call this only once rendering context is available,
+      in case you use "warmup cache" feature ( https://castle-engine.io/manual_castle_settings.php#section_warmup_cache ).
+      The cache will be initialized better (with rendering resoruces too)
+      if you call this after rendering context is available.
+      It is easiest if you use TCastleWindow: just do this in Application.OnInitialize
+      callback, which is called after rendering context is available
+      and is natural place to initialize stuff. }
     procedure LoadSettings(const SettingsUrl: String);
 
     { Delay in seconds before showing the tooltip. }
@@ -637,6 +728,12 @@
       {$ifdef FPC}default DefaultTooltipDelay{$endif};
     property TooltipDistance: Cardinal read FTooltipDistance write FTooltipDistance
       default DefaultTooltipDistance;
+
+    { Hide the tooltip, if was displayed, right now.
+      Useful if you e.g. want to make a screenshot now - e.g. for castle-model-viewer-mobile.
+      TODO: Would be more natural to hide tooltip when parent exists:=false,
+      and then this is unnecessary. }
+    procedure InternalTooltipHide;
 
     { Enable automatic scaling of the UI.
 
@@ -659,11 +756,26 @@
       read FUIScaling write SetUIScaling default usNone;
 
     { Reference width and height to which we fit the container size
-      (as seen by TCastleUserInterface implementations) when UIScaling is
-      usEncloseReferenceSize or usFitReferenceSize.
-      See @link(usEncloseReferenceSize) and @link(usFitReferenceSize)
-      for precise description how this works.
-      Set both these properties, or set only one (and leave the other as zero).
+      when UIScaling is
+      usEncloseReferenceSize,
+      usEncloseReferenceSizeAutoOrientation,
+      usFitReferenceSize.
+
+      See the documentation of these values and @url(https://castle-engine.io/manual_castle_settings.php manual)
+      to understand how UI scaling works.
+
+      You can set both UIReferenceWidth and UIReferenceHeight,
+      or set only one (and leave the other as zero).
+
+      Note: If only one of UIReferenceWidth and UIReferenceHeight is non-zero,
+      then these 3 UI scaling modes are equivalent:
+      - usEncloseReferenceSize and
+      - usEncloseReferenceSizeAutoOrientation
+      - usFitReferenceSize
+      When only one UIReferenceWidth and UIReferenceHeight is non-zero,
+      then all these 3 modes just adjust scaling based on this one
+      non-zero reference size.
+
       @groupBegin }
     property UIReferenceWidth: Single
       read FUIReferenceWidth write SetUIReferenceWidth {$ifdef FPC}default 0{$endif};
@@ -729,8 +841,8 @@
 
     { Input (key, touch) to toggle the inspector at any point in the application.
       By default this is possible in debug builds, using key F8,
-      or pressing 3 fingers for 1 second (latter is useful on multi-touch devices). }
-    property InputInspector: TInputInspector read FInputInspector;
+      or pressing 3 fingers for 1 second. }
+    class property InputInspector: TInputInspector read FInputInspector;
 
     { @deprecated Use InputInspector.Key now. }
     property InspectorKey: TKey read GetInspectorKey write SetInspectorKey;
@@ -796,6 +908,28 @@
       Use with indexes between 0 and ViewStackCount - 1.
       View stack is managed using @link(View) / @link(PushView) / @link(PopView). }
     property ViewStack [const Index: Integer]: TCastleView read GetViewStack;
+
+    { Safe border sizes you should honor in your UI design (do not place there
+      UI elements that have to be readable or clickable, like labels or buttons)
+      on mobile devices.
+
+      This is important for full-screen Android and iOS applications.
+      You have to leave this space empty, that is: place there simple unimportant
+      UI -- solid color, gradients. And be prepared it may be partially or
+      completely obscured by the device's status bar (on top, with stuff like
+      clock, battery, network status) or physical things obscuring the screen.
+
+      This is also sometimes called "safe area", "display cutout",
+      "statusBarHeight" (top), "bottomBarHeight" (bottom).
+      See e.g. Android docs:
+      https://developer.android.com/design/ui/mobile/guides/foundations/system-bars . }
+    function SafeBorder: TBorder;
+
+    { Event called right after @link(SafeBorder) changed. }
+    property OnSafeBorderChanged: TNotifyEvent read FOnSafeBorderChanged write FOnSafeBorderChanged;
+
+    { @exclude }
+    procedure InternalSetSafeBorderScaled(const Value: TVector4);
   end;
 
 {$endif read_interface}
@@ -816,12 +950,6 @@ constructor TCastleContainer.Create(AOwner: TComponent);
 begin
   inherited;
 
-  FInputInspector := TInputInspector.Create(Self);
-  FInputInspector.Key := {$ifdef DEBUG} keyF8 {$else} keyNone {$endif};
-  FInputInspector.KeyModifiers := [];
-  FInputInspector.PressFingers := {$ifdef DEBUG} 3 {$else} 0 {$endif};
-  FInputInspector.PressTime := 1;
-
   FControls := TInternalChildrenControls.Create(nil);
   FControls.Container := Self;
   FTooltipDelay := DefaultTooltipDelay;
@@ -838,6 +966,9 @@ begin
   FContext := TRenderContext.Create(nil);
   FBackgroundEnable := true;
   FBackgroundColor := DefaultBackgroundColor;
+  FForceCaptureInputObserver := TFreeNotificationObserver.Create(Self);
+  FForceCaptureInputObserver.OnFreeNotification := {$ifdef FPC}@{$endif} ForceCaptureInputFreeNotification;
+  FSafeBorder := TBorder.Create(nil);
 
   { connect 3D device - 3Dconnexion device }
   Mouse3dPollTimer := 0;
@@ -848,10 +979,16 @@ begin
       WritelnLog('3D Mouse', 'Exception %s when initializing T3DConnexionDevice: %s',
         [E.ClassName, E.Message]);
   end;
+
+  if Messaging <> nil then
+    Messaging.OnReceive.Add({$ifdef FPC}@{$endif} MessageReceived);
 end;
 
 destructor TCastleContainer.Destroy;
 begin
+  if Messaging <> nil then
+    Messaging.OnReceive.Remove({$ifdef FPC}@{$endif} MessageReceived);
+
   if FViewStack <> nil then
   begin
     View := nil; // should clean FViewStack
@@ -859,6 +996,7 @@ begin
   end;
   if RenderContext = FContext then
     RenderContext := nil;
+  FreeAndNil(FSafeBorder);
   FreeAndNil(FContext);
   FreeAndNil(FPressed);
   FreeAndNil(FFps);
@@ -875,14 +1013,6 @@ end;
 procedure TCastleContainer.Notification(AComponent: TComponent; Operation: TOperation);
 begin
   inherited;
-
-  { Note: do not move niling FForceCaptureInput to DetachNotification,
-    as we don't want to nil the public property too eagerly, the value
-    of ForceCaptureInput should remain stable. }
-  if (Operation = opRemove) and (AComponent = FForceCaptureInput) then
-    { set to nil by SetForceCaptureInput to clean nicely }
-    ForceCaptureInput := nil;
-
   if (Operation = opRemove) and (AComponent is TCastleUserInterface) then
     DetachNotification(TCastleUserInterface(AComponent));
 end;
@@ -891,12 +1021,14 @@ procedure TCastleContainer.SetForceCaptureInput(const Value: TCastleUserInterfac
 begin
   if FForceCaptureInput <> Value then
   begin
-    if FForceCaptureInput <> nil then
-      FForceCaptureInput.RemoveFreeNotification(Self);
     FForceCaptureInput := Value;
-    if FForceCaptureInput <> nil then
-      FForceCaptureInput.FreeNotification(Self);
+    FForceCaptureInputObserver.Observed := Value;
   end;
+end;
+
+procedure TCastleContainer.ForceCaptureInputFreeNotification(const Sender: TFreeNotificationObserver);
+begin
+  ForceCaptureInput := nil;
 end;
 
 procedure TCastleContainer.DetachNotification(const C: TCastleUserInterface);
@@ -928,7 +1060,7 @@ begin
   end;
 end;
 
-function TCastleContainer.TryGetFingerOfControl(const C: TCastleUserInterface; out Finger: TFingerIndex): boolean;
+function TCastleContainer.TryGetFingerOfControl(const C: TCastleUserInterface; out Finger: TFingerIndex): Boolean;
 var
   FingerControlPair: {$ifdef FPC}TFingerIndexCaptureMap.TDictionaryPair{$else}TPair<TFingerIndex, TCastleUserInterface>{$endif};
 begin
@@ -943,7 +1075,7 @@ begin
   Result := false;
 end;
 
-function TCastleContainer.UseForceCaptureInput: boolean;
+function TCastleContainer.UseForceCaptureInput: Boolean;
 begin
   Result :=
     (ForceCaptureInput <> nil) and
@@ -984,7 +1116,7 @@ end;
 
 procedure TCastleContainer.UpdateFocusAndMouseCursor;
 var
-  AnythingForcesNoneCursor: boolean;
+  AnythingForcesNoneCursor: Boolean;
 
   { Scan all Controls, recursively.
     Update (add) to FNewFocus, update (set to true) AnythingForcesNoneCursor. }
@@ -1125,9 +1257,9 @@ begin
   FFocusAndMouseCursorValid := true;
 end;
 
-function TCastleContainer.EventSensorRotation(const X, Y, Z, Angle: Double; const SecondsPassed: Single): boolean;
+function TCastleContainer.EventSensorRotation(const X, Y, Z, Angle: Double; const SecondsPassed: Single): Boolean;
 
-  function RecursiveSensorRotation(const C: TCastleUserInterface): boolean;
+  function RecursiveSensorRotation(const C: TCastleUserInterface): Boolean;
   var
     I: Integer;
   begin
@@ -1154,9 +1286,9 @@ begin
   Result := false;
 end;
 
-function TCastleContainer.EventSensorTranslation(const X, Y, Z, Length: Double; const SecondsPassed: Single): boolean;
+function TCastleContainer.EventSensorTranslation(const X, Y, Z, Length: Double; const SecondsPassed: Single): Boolean;
 
-  function RecursiveSensorTranslation(const C: TCastleUserInterface): boolean;
+  function RecursiveSensorTranslation(const C: TCastleUserInterface): Boolean;
   var
     I: Integer;
   begin
@@ -1183,9 +1315,9 @@ begin
   Result := false;
 end;
 
-function TCastleContainer.EventJoyAxisMove(const JoyID, Axis: Byte): boolean;
+function TCastleContainer.EventJoyAxisMove(const JoyID, Axis: Byte): Boolean;
 
-  function RecursiveJoyAxisMove(const C: TCastleUserInterface): boolean;
+  function RecursiveJoyAxisMove(const C: TCastleUserInterface): Boolean;
   var
     I: Integer;
   begin
@@ -1214,9 +1346,9 @@ begin
   Result := false;
 end;
 
-function TCastleContainer.EventJoyButtonPress(const JoyID, Button: Byte): boolean;
+function TCastleContainer.EventJoyButtonPress(const JoyID, Button: Byte): Boolean;
 
-  function RecursiveJoyButtonPress(const C: TCastleUserInterface): boolean;
+  function RecursiveJoyButtonPress(const C: TCastleUserInterface): Boolean;
   var
     I: Integer;
   begin
@@ -1258,6 +1390,16 @@ begin
       This is important, as it will be used in wildest scenarios
       (all CGE applications) and it may gather logs when existing. }
     FreeAndNil(FInspector);
+  end;
+end;
+
+procedure TCastleContainer.InternalTooltipHide;
+begin
+  if FTooltipParent <> nil then
+  begin
+    FTooltipParent.InternalSetTooltipExists(false);
+    HasLastPositionForTooltip := false;
+    FTooltipParent := nil;
   end;
 end;
 
@@ -1325,10 +1467,10 @@ procedure TCastleContainer.EventUpdate;
     end;
   end;
 
-  procedure RecursiveUpdate(const C: TCastleUserInterface; var HandleInput: boolean);
+  procedure RecursiveUpdate(const C: TCastleUserInterface; var HandleInput: Boolean);
   var
     I: Integer;
-    Dummy: boolean;
+    Dummy: Boolean;
   begin
     if PassEvents(C, false) then
     begin
@@ -1436,7 +1578,7 @@ procedure TCastleContainer.EventUpdate;
 
 var
   I: Integer;
-  HandleInput: boolean;
+  HandleInput: Boolean;
 begin
   Fps.InternalUpdateBegin;
 
@@ -1469,9 +1611,9 @@ begin
   if Assigned(OnUpdate) then OnUpdate(Self);
 end;
 
-function TCastleContainer.EventPress(const Event: TInputPressRelease): boolean;
+function TCastleContainer.EventPress(const Event: TInputPressRelease): Boolean;
 
-  function RecursivePress(const C: TCastleUserInterface): boolean;
+  function RecursivePress(const C: TCastleUserInterface): Boolean;
   var
     I: Integer;
   begin
@@ -1552,9 +1694,9 @@ begin
   end;
 end;
 
-function TCastleContainer.EventRelease(const Event: TInputPressRelease): boolean;
+function TCastleContainer.EventRelease(const Event: TInputPressRelease): Boolean;
 
-  function RecursiveRelease(const C: TCastleUserInterface): boolean;
+  function RecursiveRelease(const C: TCastleUserInterface): Boolean;
   var
     I: Integer;
   begin
@@ -1639,7 +1781,7 @@ begin
     FCaptureInput.Remove(FingerIndex);
 end;
 
-procedure TCastleContainer.EventOpen(const OpenWindowsCount: Cardinal);
+procedure TCastleContainer.EventOpen(const InitializedContextsCount: Cardinal);
 
   procedure RecursiveGLContextOpen(const C: TCastleUserInterface);
   var
@@ -1658,7 +1800,7 @@ procedure TCastleContainer.EventOpen(const OpenWindowsCount: Cardinal);
 var
   I: Integer;
 begin
-  if OpenWindowsCount = 1 then
+  if InitializedContextsCount = 1 then
     ApplicationProperties._GLContextOpen;
 
   { Call GLContextOpen on controls before OnOpen,
@@ -1671,7 +1813,7 @@ begin
   if Assigned(OnOpenObject) then OnOpenObject(Self);
 end;
 
-procedure TCastleContainer.EventClose(const OpenWindowsCount: Cardinal);
+procedure TCastleContainer.EventClose(const InitializedContextsCount: Cardinal);
 
   procedure RecursiveGLContextClose(const C: TCastleUserInterface);
   var
@@ -1704,7 +1846,7 @@ begin
     for I := Controls.Count - 1 downto 0 do
       RecursiveGLContextClose(Controls[I]);
 
-  if OpenWindowsCount = 1 then
+  if InitializedContextsCount = 1 then
   begin
     ApplicationProperties._GLContextClose;
 
@@ -1716,9 +1858,9 @@ begin
   end;
 end;
 
-function TCastleContainer.AllowSuspendForInput: boolean;
+function TCastleContainer.AllowSuspendForInput: Boolean;
 
-  function RecursiveAllowSuspendForInput(const C: TCastleUserInterface): boolean;
+  function RecursiveAllowSuspendForInput(const C: TCastleUserInterface): Boolean;
   var
     I: Integer;
   begin
@@ -1752,7 +1894,7 @@ end;
 
 procedure TCastleContainer.EventMotion(const Event: TInputMotion);
 
-  function RecursiveMotion(const C: TCastleUserInterface): boolean;
+  function RecursiveMotion(const C: TCastleUserInterface): Boolean;
   var
     I: Integer;
   begin
@@ -1814,7 +1956,7 @@ begin
 end;
 
 procedure TCastleContainer.ControlsVisibleChange(const Sender: TCastleUserInterface;
-  const Changes: TCastleUserInterfaceChanges; const ChangeInitiatedByChildren: boolean);
+  const Changes: TCastleUserInterfaceChanges; const ChangeInitiatedByChildren: Boolean);
 begin
   { We abort when ChangeInitiatedByChildren = true,
     because this event will be also called with ChangeInitiatedByChildren = false
@@ -1891,32 +2033,46 @@ begin
 end;
 
 procedure TCastleContainer.EventRender;
-var
-  I: Integer;
+
+  procedure RenderCore;
+  var
+    I: Integer;
+  begin
+    { draw controls in "to" order, back to front }
+    for I := 0 to Controls.Count - 1 do
+      Controls[I].InternalRecursiveRender(PixelsRect);
+
+    if FTooltipParent <> nil then
+    begin
+      RenderControlPrepare(PixelsRect);
+      {$warnings off} // using deprecated to keep it working, also to enable TCastleUserInterfaceFont to display tooltip
+      FTooltipParent.TooltipRender(FTooltipPosition);
+      {$warnings on}
+    end;
+
+    RenderControlPrepare(PixelsRect);
+    if Assigned(OnRender) then OnRender(Self);
+  end;
+
 begin
   if BackgroundEnable then
     RenderContext.Clear([cbColor], BackgroundColor);
 
-  { draw controls in "to" order, back to front }
-  for I := 0 to Controls.Count - 1 do
-    Controls[I].InternalRecursiveRender(Rect);
+  FillChar(TDrawableImage.Statistics, SizeOf(TDrawableImage.Statistics), #0);
 
-  if FTooltipParent <> nil then
+  if UserInterfaceBatching then
   begin
-    RenderControlPrepare(Rect);
-    {$warnings off} // using deprecated to keep it working, also to enable TCastleUserInterfaceFont to display tooltip
-    FTooltipParent.TooltipRender(FTooltipPosition);
-    {$warnings on}
-  end;
-
-  RenderControlPrepare(Rect);
-  if Assigned(OnRender) then OnRender(Self);
+    TDrawableImage.BatchingBegin;
+    RenderCore;
+    TDrawableImage.BatchingEnd;
+  end else
+    RenderCore;
 end;
 
 procedure TCastleContainer.RenderControl(const Control: TCastleUserInterface;
   const ViewportRect: TRectangle);
 var
-  NeedsContainerSet, NeedsGLOpen: boolean;
+  NeedsContainerSet, NeedsGLOpen: Boolean;
   OldContainer: TCastleContainer;
 begin
   NeedsContainerSet := Control.Container <> Self;
@@ -1944,9 +2100,16 @@ begin
     Control.GLContextClose;
 end;
 
+const
+  UiScalingUsesContainerSize = [
+    usEncloseReferenceSize,
+    usEncloseReferenceSizeAutoOrientation,
+    usFitReferenceSize
+  ];
+
 procedure TCastleContainer.EventResize;
 begin
-  if UIScaling in [usEncloseReferenceSize, usFitReferenceSize] then
+  if UIScaling in UiScalingUsesContainerSize then
     { usXxxReferenceSize adjust current Width/Height to reference,
       so the FUIScale must be adjusted on each resize. }
     UpdateUIScale;
@@ -1958,8 +2121,6 @@ begin
     This can significantly speed things up when Culling makes sense
     (lots of off-screen controls). }
 
-  { This way control's get Resize before our OnResize,
-    useful to process them all reliably in OnResize. }
   if Assigned(OnResize) then OnResize(Self);
 end;
 
@@ -2027,7 +2188,7 @@ end;
 
 function TCastleContainer.MouseLookDelta(const Event: TInputMotion): TVector2;
 begin
-  Result := MouseLookDelta(Event, FloatRectangle(Rect));
+  Result := MouseLookDelta(Event, FloatRectangle(PixelsRect));
 end;
 
 function TCastleContainer.MouseLookDelta(const Event: TInputMotion;
@@ -2212,8 +2373,7 @@ end;
 
 class function TCastleContainer.InternalCalculateUIScale(
   const AUIScaling: TUIScaling;
-  const AUIReferenceWidth: Single;
-  const AUIReferenceHeight: Single;
+  AUIReferenceWidth, AUIReferenceHeight: Single;
   const AUIExplicitScale: Single;
   const ADpi, AWidth, AHeight: Single): Single;
 begin
@@ -2226,14 +2386,43 @@ begin
           [ADpi, ADpi / DefaultDpi, DefaultDpi]);
         Result := ADpi / DefaultDpi;
       end;
-    usEncloseReferenceSize, usFitReferenceSize:
+    usEncloseReferenceSize, usEncloseReferenceSizeAutoOrientation, usFitReferenceSize:
       begin
         Result := 1;
+
+        { Implement usEncloseReferenceSizeAutoOrientation difference over
+          usEncloseReferenceSize: swap reference width/height to match
+          current screen orientation. }
+        if (AUIScaling = usEncloseReferenceSizeAutoOrientation) and
+           (AWidth > 0) and
+           (AHeight > 0) and
+           (AUIReferenceWidth > 0) and
+           (AUIReferenceHeight > 0) then
+        begin
+          if AWidth > AHeight then
+          begin
+            if AUIReferenceWidth < AUIReferenceHeight then
+              SwapValues(AUIReferenceWidth, AUIReferenceHeight);
+          end else
+          if AWidth < AHeight then
+          begin
+            if AUIReferenceWidth > AUIReferenceHeight then
+              SwapValues(AUIReferenceWidth, AUIReferenceHeight);
+          end;
+          Assert(
+            (AWidth > AHeight) =
+            (AUIReferenceWidth > AUIReferenceHeight)
+          );
+        end;
+
         if (AUIReferenceWidth <> 0) and (AWidth > 0) then
         begin
           Result := AWidth / AUIReferenceWidth;
           if (AUIReferenceHeight <> 0) and (AHeight > 0) then
-            if AUIScaling = usEncloseReferenceSize then
+            if AUIScaling in [
+                 usEncloseReferenceSize,
+                 usEncloseReferenceSizeAutoOrientation
+               ] then
               MinVar(Result, AHeight / AUIReferenceHeight)
             else
               MaxVar(Result, AHeight / AUIReferenceHeight);
@@ -2256,13 +2445,19 @@ end;
 procedure TCastleContainer.UpdateUIScale;
 begin
   if (not GLInitialized) and
-     (UIScaling in [usEncloseReferenceSize, usFitReferenceSize]) then
+     (UIScaling in UiScalingUsesContainerSize) then
     // don't adjust FUIScale before our Width/Height are sensible
     FUIScale := 1
   else
     FUIScale := InternalCalculateUIScale(
       UIScaling, UIReferenceWidth, UIReferenceHeight, UIExplicitScale,
-      Dpi, Width, Height);
+      Dpi, PixelsWidth, PixelsHeight);
+
+  { When FSafeBorderScaled is non-zero, then changing FUIScale also changed
+    SafeBorder result. }
+  if not FSafeBorderScaled.IsPerfectlyZero then
+    if Assigned(FOnSafeBorderChanged) then
+      FOnSafeBorderChanged(Self);
 
   { Note that we don't cause TCastleUserInterface.UIScaleChanged calls now.
     They are done before BeforeRender, this way culled UI controls
@@ -2274,17 +2469,17 @@ end;
 
 function TCastleContainer.UnscaledWidth: Single;
 begin
-  Result := Width / FUIScale;
+  Result := PixelsWidth / FUIScale;
 end;
 
 function TCastleContainer.UnscaledHeight: Single;
 begin
-  Result := Height / FUIScale;
+  Result := PixelsHeight / FUIScale;
 end;
 
 function TCastleContainer.UnscaledRect: TFloatRectangle;
 begin
-  Result := FloatRectangle(Rect);
+  Result := FloatRectangle(PixelsRect);
   if not Result.IsEmpty then
   begin
     Result.Width  := Result.Width  / FUIScale;
@@ -2292,9 +2487,14 @@ begin
   end;
 end;
 
+function TCastleContainer.ScaledStatusBarHeight: Cardinal;
+begin
+  Result := Round(FSafeBorderScaled.X);
+end;
+
 function TCastleContainer.StatusBarHeight: Single;
 begin
-  Result := ScaledStatusBarHeight / FUIScale;
+  Result := SafeBorder.Top;
 end;
 
 function TCastleContainer.SaveScreen(const SaveRect: TRectangle): TRGBImage;
@@ -2318,7 +2518,7 @@ end;
 
 function TCastleContainer.SaveScreen: TRGBImage;
 begin
-  Result := SaveScreen(Rect);
+  Result := SaveScreen(PixelsRect);
 end;
 
 function TCastleContainer.SaveScreen(const SaveRect: TFloatRectangle): TRGBImage;
@@ -2350,17 +2550,27 @@ end;
 
 function TCastleContainer.SaveScreenRgba: TRGBAlphaImage;
 begin
-  Result := SaveScreenRgba(Rect);
+  Result := SaveScreenRgba(PixelsRect);
+end;
+
+function TCastleContainer.Width: Integer;
+begin
+  Result := PixelsWidth;
+end;
+
+function TCastleContainer.Height: Integer;
+begin
+  Result := PixelsHeight;
 end;
 
 function TCastleContainer.Rect: TRectangle;
 begin
-  Result := Rectangle(0, 0, Width, Height);
+  Result := PixelsRect;
 end;
 
-function TCastleContainer.ScaledStatusBarHeight: Cardinal;
+function TCastleContainer.PixelsRect: TRectangle;
 begin
-  Result := 0;
+  Result := Rectangle(0, 0, PixelsWidth, PixelsHeight);
 end;
 
 procedure TCastleContainer.Invalidate;
@@ -2368,7 +2578,7 @@ begin
   { Default implementation, does nothing, assuming the main program redraws in a loop. }
 end;
 
-function TCastleContainer.Focused: boolean;
+function TCastleContainer.Focused: Boolean;
 begin
   { Default implementation, assuming that the context is always focused. }
   Result := true;
@@ -2385,7 +2595,7 @@ begin
     Some methods, like TCastleContainer.UpdateFocusAndMouseCursor,
     use this to calculate "focused" CGE control.
   }
-  Result := Vector2(Width / 2, Height / 2);
+  Result := Vector2(PixelsWidth / 2, PixelsHeight / 2);
 end;
 
 procedure TCastleContainer.SetMousePosition(const Value: TVector2);
@@ -2405,7 +2615,7 @@ begin
   Result := 1;
 end;
 
-function TCastleContainer.GLInitialized: boolean;
+function TCastleContainer.GLInitialized: Boolean;
 begin
   { Default implementation, assuming the OpenGL context is always initialized. }
   Result := true;
@@ -2413,8 +2623,6 @@ end;
 
 procedure TCastleContainer.LoadSettings(const SettingsUrl: String);
 begin
-  if not ApplicationProperties.IsGLContextOpen then
-    raise Exception.Create('Rendering context not open when calling TCastleContainer.LoadSettings. Call LoadSettings later, e.g. in Application.OnInitialize, TCastleWindow.OnOpen, TCastleControl.OnOpen');
   SettingsLoad(Self, SettingsUrl);
 end;
 
@@ -2554,6 +2762,58 @@ begin
     raise EInternalError.CreateFmt('TCastleView.GetViewStack: view stack is empty, cannot get view index %d',
       [Index]);
   Result := FViewStack[Index];
+end;
+
+procedure TCastleContainer.InternalSetSafeBorderScaled(const Value: TVector4);
+begin
+  FSafeBorderScaled := Value;
+  WritelnLog('Safe borders updated. Size scaled (in final pixels): %s, size accounting for UI scaling: %s', [
+    FSafeBorderScaled.ToString,
+    SafeBorder.ToString
+  ]);
+  if Assigned(FOnSafeBorderChanged) then
+    FOnSafeBorderChanged(Self);
+end;
+
+function TCastleContainer.MessageReceived(const Received: TCastleStringList;
+  const ReceivedStream: TMemoryStream): Boolean;
+var
+  NewSafeBorderScaled: TVector4;
+begin
+  Result := false;
+  if (Received.Count = 5) and
+     (Received[0] = 'safe-borders') then
+  begin
+    NewSafeBorderScaled := Vector4(
+      StrToInt(Received[1]),
+      StrToInt(Received[2]),
+      StrToInt(Received[3]),
+      StrToInt(Received[4])
+    );
+    InternalSetSafeBorderScaled(NewSafeBorderScaled);
+    Result := true;
+  end
+end;
+
+function TCastleContainer.SafeBorder: TBorder;
+begin
+  // assign from FSafeBorderScaled and adjust for UI scaling
+  FSafeBorder.Top    := FSafeBorderScaled.X / UIScale;
+  FSafeBorder.Right  := FSafeBorderScaled.Y / UIScale;
+  FSafeBorder.Bottom := FSafeBorderScaled.Z / UIScale;
+  FSafeBorder.Left   := FSafeBorderScaled.W / UIScale;
+  Result := FSafeBorder;
+end;
+
+function TCastleContainer.FocusFront: TCastleUserInterface;
+begin
+  if ForceCaptureInput <> nil then
+    Result := ForceCaptureInput
+  else
+  if FFocus.Count <> 0 then
+    Result := FFocus.Last // last item is front-most
+  else
+    Result := nil;
 end;
 
 {$endif read_implementation}

@@ -69,7 +69,7 @@ procedure ShapesFilterBlending(
 implementation
 
 uses SysUtils,
-  {$ifdef FPC} CastleGL, {$else} OpenGL, OpenGLext, {$endif}
+  {$ifdef OpenGLES} CastleGLES, {$else} CastleGL, {$endif}
   CastleLog, X3DNodes, CastleScene, CastleTimeUtils, CastleRenderContext,
   CastleColors, CastleVectors;
 
@@ -166,7 +166,7 @@ var
   Shape: TShape;
   I: Integer;
 begin
-  //FrameProfiler.Start(fmRenderShapesFilterBlending);
+  FrameProfiler.Start(fmRenderShapesFilterBlending);
 
   { Use "Count := 0" instead of Clear, this way previous Capacity remains }
   FilteredShapes.Count := 0;
@@ -193,7 +193,7 @@ begin
     end;
   end;
 
-  //FrameProfiler.Stop(fmRenderShapesFilterBlending);
+  FrameProfiler.Stop(fmRenderShapesFilterBlending);
 end;
 
 end.
