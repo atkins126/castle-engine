@@ -509,6 +509,12 @@ type
     procedure ReadWriteList(const Key: String;
       const ListEnumerate: TListEnumerateEvent; const ListAdd: TListAddEvent;
       const ListClear: TListClearEvent); virtual; abstract;
+
+    { Is there set with the given Key, and non-empty?
+      Internal, because use-case small: backward compatibility for old designs
+      with "Spatial" set.
+      @exclude}
+    function InternalHasNonEmptySet(const Key: String): Boolean; virtual; abstract;
   end;
 
   { Component with various CGE extensions: can be a parent of other non-visual components
@@ -909,11 +915,14 @@ type
       (or there was @nil inside the list and it got removed). }
     function Extract(RemoveClass: TClass): TObject; overload;
 
-    { Delete (do not free) all found instances of the given Item.
+    { Delete all found instances of the given Item.
       Shifts all other pointers to the left.
       Returns how many instances were removed (that is, how much Count
-      was decreased). }
-    function RemoveAll(Item: TObject): Cardinal;
+      was decreased).
+
+      This does not free the items,
+      unless the list has been created with OwnsObjects = @true. }
+    function RemoveAll(const Item: TObject): Cardinal;
 
     function IsFirst(Value: TObject): boolean;
     function IsLast(Value: TObject): boolean;
@@ -1036,7 +1045,7 @@ type
 
     Using this is an alternative to observing freeing using
     standard TComponent.FreeNotification / TComponent.RemoveFreeNotification mechanism
-    https://castle-engine.io/modern_pascal_introduction.html#_free_notification .
+    https://castle-engine.io/modern_pascal#_free_notification .
     Using TFreeNotificationObserver is:
 
     @unorderedList(
@@ -1045,7 +1054,7 @@ type
         E.g. the line @code(FChildObserver.Observed := Value) is simpler
         than the typical equivalent lines required to unregister notification
         of the old value and register notification of the new value.
-        (See https://castle-engine.io/modern_pascal_introduction.html#_free_notification
+        (See https://castle-engine.io/modern_pascal#_free_notification
         example of FreeNotification usage.)
       )
 
@@ -2050,6 +2059,7 @@ type
       const ListEnumerate: TSerializationProcess.TListEnumerateEvent;
       const ListAdd: TSerializationProcess.TListAddEvent;
       const ListClear: TSerializationProcess.TListClearEvent); override;
+    function InternalHasNonEmptySet(const Key: String): Boolean; override;
   end;
 
 procedure TTranslatePropertiesOnChildren.TranslatePropertiesOnChild(Child: TComponent);
@@ -2089,6 +2099,12 @@ end;
 procedure TTranslatePropertiesOnChildren.ReadWriteSingle(const Key: String; var Value: Single; const IsStored: Boolean);
 begin
   // just override abstract method to do nothing
+end;
+
+function TTranslatePropertiesOnChildren.InternalHasNonEmptySet(const Key: String): Boolean;
+begin
+  // just override abstract method to do nothing
+  Result := false;
 end;
 
 procedure TranslateProperties(const C: TComponent;
@@ -2325,7 +2341,7 @@ begin
   Result := nil;
 end;
 
-function TCastleObjectList.RemoveAll(Item: TObject): Cardinal;
+function TCastleObjectList.RemoveAll(const Item: TObject): Cardinal;
 var
   I: Integer;
 begin
@@ -2334,7 +2350,10 @@ begin
   while I < Count do
   begin
     if Items[I] = Item then
-      begin Delete(I); Inc(Result) end else
+    begin
+      Delete(I);
+      Inc(Result);
+    end else
       Inc(I);
   end;
 end;

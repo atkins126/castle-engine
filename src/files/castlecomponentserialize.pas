@@ -265,7 +265,9 @@ type
         )
 
         @item(Note also one disadvantage of @code(AssociateReferences):
-          It doesn't change that field type matches.)
+          It doesn't check that field type matches.
+          If a field name has a typo, it will be just left @nil,
+          causing "Access Violation" if you try to access it.)
       )
 
       For example:
@@ -526,6 +528,7 @@ type
         procedure ReadWriteList(const Key: String;
           const ListEnumerate: TSerializationProcess.TListEnumerateEvent; const ListAdd: TSerializationProcess.TListAddEvent;
           const ListClear: TSerializationProcess.TListClearEvent); override;
+        function InternalHasNonEmptySet(const Key: String): Boolean; override;
       end;
       TSerializationProcessReaderList = {$ifdef FPC}specialize{$endif} TObjectList<TSerializationProcessReader>;
 
@@ -718,6 +721,15 @@ begin
       ListAdd(Child);
     end;
   end;
+end;
+
+function TCastleJsonReader.TSerializationProcessReader.InternalHasNonEmptySet(
+  const Key: String): Boolean;
+var
+  JsonChildren: TJsonArray;
+begin
+  JsonChildren := CurrentlyReading.Find(Key, jtArray) as TJsonArray;
+  Result := (JsonChildren <> nil) and (JsonChildren.Count > 0);
 end;
 
 procedure TCastleJsonReader.BeforeReadObject(
@@ -1300,6 +1312,7 @@ type
           const ListEnumerate: TSerializationProcess.TListEnumerateEvent;
           const ListAdd: TSerializationProcess.TListAddEvent;
           const ListClear: TSerializationProcess.TListClearEvent); override;
+        function InternalHasNonEmptySet(const AKey: String): Boolean; override;
       end;
       TSerializationProcessWriterList = {$ifdef FPC}specialize{$endif} TObjectList<TSerializationProcessWriter>;
 
@@ -1384,6 +1397,18 @@ begin
   CurrentlyWritingArray := nil; // will be created on-demand
   Key := AKey;
   ListEnumerate({$ifdef FPC}@{$endif}WriteItem);
+end;
+
+function TCastleJsonWriter.TSerializationProcessWriter.InternalHasNonEmptySet(const AKey: String): Boolean;
+var
+  JsonChildren: TJsonArray;
+begin
+  JsonChildren := CurrentlyWriting.Find(Key, jtArray) as TJsonArray;
+  Result := (JsonChildren <> nil) and (JsonChildren.Count > 0);
+
+  // With the current usage, it is unexpected if this results true ever.
+  if Result then
+    WritelnWarning('InternalHasNonEmptySet is only used for "Spatial" backward compatibility now, and at writing the "Spatial" should never be present.');
 end;
 
 constructor TCastleJsonWriter.Create;
