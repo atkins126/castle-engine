@@ -37,7 +37,7 @@ requires
   IndyCore;
 
 contains
-  castleinternalcontainer in '..\..\src\delphi\castleinternalcontainer.pas',
+  castlecontrolcontainer in '..\..\src\delphi\castlecontrolcontainer.pas',
   castleinternaldelphiutils in '..\..\src\delphi\castleinternaldelphiutils.pas',
   castleapplicationproperties in '..\..\src\base\castleapplicationproperties.pas',
   castleclassutils in '..\..\src\base\castleclassutils.pas',
@@ -304,6 +304,7 @@ contains
   castleviewport in '..\..\src\scene\castleviewport.pas',
   x3dcamerautils in '..\..\src\scene\x3dcamerautils.pas',
   x3dtime in '..\..\src\scene\x3dtime.pas',
+  castlelivingbehaviors in '..\..\src\scene\castlelivingbehaviors.pas',
   kraft in '..\..\src\physics\kraft\kraft.pas',
   ImagingXpm in '..\..\src\vampyre_imaginglib\src\Extensions\ImagingXpm.pas',
   ImagingPcx in '..\..\src\vampyre_imaginglib\src\Extensions\ImagingPcx.pas',
