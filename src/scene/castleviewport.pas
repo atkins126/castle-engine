@@ -225,7 +225,6 @@ type
       Given parameters are in world coordinates. }
     function CameraRayCollision(const RayOrigin, RayDirection: TVector3): TRayCollision;
 
-    procedure SetSceneManager(const Value: TCastleSceneManager);
     { Get current Container.MousePosition.
       Secured in case Container not assigned (returns @false)
       or when Navigation uses MouseLook (in which case, returns the middle of our area,
@@ -271,7 +270,6 @@ type
   private
     var
       FProjection: TProjection;
-      FSceneManager: TCastleSceneManager;
       ItemsNodesFreeOccurred: Boolean;
 
     { Make sure to call AssignDefaultCamera, if needed because of AutoCamera. }
@@ -562,10 +560,11 @@ type
     {$endif}
 
     { Set current camera vectors and projection,
-      to best reflect current @link(MainScene) or current @link(Items)
-      bounding box.
+      to best reflect current @link(TCastleRootTransform.MainScene Items.MainScene)
+      or current @link(Items) bounding box.
 
-      If @link(MainScene) is set and it has a preferred camera (TViewpointNode,
+      If @link(TCastleRootTransform.MainScene Items.MainScene)
+      is set and it has a preferred camera (TViewpointNode,
       which can be specified in X3D, glTF, Collada files) then it will be used.
       Otherwise we calculate camera using CameraViewpointForWholeScne
       to see the whole world.
@@ -972,9 +971,6 @@ type
     { See @link(TCastleAbstractRootTransform.Paused). }
     property Paused: boolean read GetPaused write SetPaused default false;
       deprecated 'use Items.Paused';
-
-    property SceneManager: TCastleSceneManager read FSceneManager write SetSceneManager;
-      deprecated 'assign Items from one TCastleViewport to another to view the same world from multiple viewports';
     {$endif}
 
     { Create new camera and make it used by this viewport.
@@ -1708,12 +1704,6 @@ end;
 
 destructor TCastleViewport.Destroy;
 begin
-  {$ifdef FPC}
-  {$warnings off} // only to keep deprecated feature working
-  SceneManager := nil; { remove Self from SceneManager.Viewports }
-  {$warnings on}
-  {$endif}
-
   { unregister free notification from these objects }
   ClearMouseRayHit;
   AvoidNavigationCollisions := nil;
@@ -2252,7 +2242,11 @@ var
         mark keys/mouse as handled". }
 
       Items.Update(SecondsPassedScaled, RemoveItem);
-      { we ignore RemoveItem --- main Items list cannot be removed }
+
+      { we ignore RemoveItem --- main Items list cannot be removed.
+        Actually, TCastleAbstractRootTransform.Update never changes it,
+        and TCastleAbstractRootTransform.UpdateIncreaseTime ignores the
+        "inherited Update" logic for it. }
     end;
   end;
 
@@ -2721,9 +2715,9 @@ procedure TCastleViewport.RenderFromView3D(const Params: TRenderParams);
   begin
     { We must first render all non-transparent objects,
       then all transparent objects. Otherwise transparent objects
-      (that must be rendered without updating depth buffer) could get brutally
-      covered by non-transparent objects (that are in fact further away from
-      the camera). }
+      (that must be rendered without updating depth buffer) could get
+      obscured by non-transparent objects (that would happen to be further away
+      from the camera, but also be drawn after the transparent object). }
 
     PassParams.Init;
     PassParams.UsingBlending := false;
@@ -2768,7 +2762,7 @@ begin
   { Calculate contents of AllShapesCollector.
     This way Items.Render, with all transformation calcuations,
     frustum tests etc. is done only once, no matter how many times we need to
-    call RenderOnPass. }
+    call RenderOnePass. }
   AllShapesCollector.Clear;
   Assert(Params.Collector = AllShapesCollector);
   Params.Frustum := @Params.RenderingCamera.Frustum;
@@ -4218,22 +4212,6 @@ begin
   NewBackground.Name := ProposeComponentName(TCastleBackground, Owner);
   AddNonVisualComponent(NewBackground);
   Background := NewBackground;
-end;
-
-procedure TCastleViewport.SetSceneManager(const Value: TCastleSceneManager);
-begin
-  {$ifdef FPC}
-  {$warnings off} // only to keep deprecated feature working
-  if Value <> FSceneManager then
-  begin
-    if SceneManager <> nil then
-      SceneManager.Viewports.Remove(Self);
-    FSceneManager := Value;
-    if SceneManager <> nil then
-      SceneManager.Viewports.Add(Self);
-  end;
-  {$warnings on}
-  {$endif}
 end;
 
 function TCastleViewport.PropertySections(const PropertyName: String): TPropertySections;

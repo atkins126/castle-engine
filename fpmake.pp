@@ -399,13 +399,18 @@ begin
     P.Targets.AddUnit('castleinternaldirectoryinformation.pas');
     P.Targets.AddUnit('castleinternalfilemonitor.pas');
     P.Targets.AddUnit('castleinternalurlutils.pas');
-    P.Targets.AddUnit('castleinternaltools.pas');
     P.Targets.AddUnit('castlelocalizationgettext.pas');
     P.Targets.AddUnit('castlerecentfiles.pas');
     P.Targets.AddUnit('castleuriutils.pas');
     P.Targets.AddUnit('castlexmlcfginternal.pas');
     P.Targets.AddUnit('castlexmlconfig.pas');
     P.Targets.AddUnit('castlexmlutils.pas');
+    P.Targets.AddUnit('castlezip.pas');
+
+    P.SourcePath.Add('src/files/tools');
+    P.Targets.AddUnit('castleinternaltools.pas');
+    P.Targets.AddUnit('castleinternalprojectlocalsettings.pas');
+    P.Targets.AddUnit('castleinternalarchitectures.pas');
 
     P.SourcePath.Add('src/physics/kraft');
     P.Targets.AddUnit('kraft.pas');
@@ -520,7 +525,7 @@ begin
     P.Targets.AddUnit('x3dloadinternalmd3.pas');
 
     P.SourcePath.Add('src/scene/load/ifc');
-    P.Targets.AddUnit('castleinternalloadsaveifc.pas');
+    P.Targets.AddUnit('castleifc.pas');
 
     P.SourcePath.Add('src/scene/load/collada');
     P.Targets.AddUnit('x3dloadinternalcollada.pas');
