@@ -1,5 +1,5 @@
 {
-  Copyright 2003-2024 Michalis Kamburelis.
+  Copyright 2003-2025 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -360,12 +360,15 @@ type
   TCastleSceneCore = class(TX3DEventsEngine)
   private
     type
-      TSceneValidity = (fvLocalBoundingBox,
+      TSceneValidity = (
+        fvLocalBoundingBox,
         fvVerticesCount,
         fvTrianglesCount,
         fvMainLightForShadows,
+        fvDetectedWholeSceneManifold,
         fvShapesActiveCount,
-        fvShapesActiveVisibleCount);
+        fvShapesActiveVisibleCount
+      );
 
       TSceneValidities = set of TSceneValidity;
 
@@ -456,6 +459,9 @@ type
     LastCameraStateId: TFrameId;
     FDefaultAnimationTransition: Single;
     FCache: Boolean;
+    { Calculated InternalDetectedWholeSceneManifold result.
+      Valid only if fvDetectedWholeSceneManifold in Validities. }
+    FDetectedWholeSceneManifold: Boolean;
 
     { All InternalUpdateCamera calls will disable smooth (animated)
       transitions when this is true.
@@ -541,12 +547,6 @@ type
 
     { Call this if during this frame, TTimeDependentFunctionality.PartialSend always remained @nil. }
     procedure NoPartialSend;
-
-    { Recalculate and update LODTree.Level.
-      Also sends level_changed when needed.
-      Call only when ProcessEvents. }
-    procedure UpdateLODLevel(const LODTree: TShapeTreeLOD;
-      const CameraLocalPosition: TVector3);
 
     procedure SetUrl(const AValue: String);
     procedure SetShadowMaps(const Value: boolean);
@@ -679,13 +679,13 @@ type
     FViewpointStack: TViewpointStack;
 
     { If @true, then next ChangedAll call will do ProcessShadowMapsReceivers
-      at the end.
-
-      ProcessShadowMapsReceivers are correctly called at the
-      right moment of ChangedAll, so that they have the necessary
-      information (Shapes) ready and their modifications (new GeneratedTextures
-      items) are accounted for. }
+      at the end, regardless of UsesShadowMaps.
+      So it will detect if model starts using shadow maps. }
     ScheduledShadowMapsProcessing: boolean;
+
+    { Is model using shadow maps.
+      Detected by last ProcessShadowMapsReceivers call. }
+    UsesShadowMaps: Boolean;
 
     { Mechanism to schedule ChangedAll and GeometryChanged calls. }
     ChangedAllSchedule: Cardinal;
@@ -805,11 +805,18 @@ type
     procedure UpdateAutoAnimation(const StopIfPlaying: Boolean);
 
     { Get camera position in current scene local coordinates.
+
+      Uses known camera from World.MainCamera and known world transformation
+      from HasWorldTransform, WorldInverseTransform.
+      As such, this cannot work reliably if TCastleScene is present multiple
+      times in the world (like through TCastleTransformReference),
+      because we only know one transfomation of scene.
+
       This is calculated every time now (in the future it may be optimized
       to recalculate only when WorldTransform changed, e.g. using
       FWorldTransformAndInverseId). }
-    function GetCameraLocal(out CameraVectors: TViewVectors): boolean; overload;
-    function GetCameraLocal(out CameraLocalPosition: TVector3): boolean; overload;
+    function GetCameraLocal(out CameraVectors: TViewVectors): Boolean; overload;
+    function GetCameraLocal(out CameraLocalPosition: TVector3): Boolean; overload;
 
     function PointingDevicePressRelease(const DoPress: boolean;
       const Distance: Single; const CancelAction: boolean): boolean;
@@ -1018,7 +1025,7 @@ type
 
       URL is downloaded using the CastleDownload unit,
       so it supports files, http resources and more.
-      See https://castle-engine.io/manual_network.php
+      See https://castle-engine.io/url
       about supported URL schemes.
       If you all you care about is loading normal files, then just pass
       a normal filename (absolute or relative to the current directory)
@@ -1288,6 +1295,14 @@ type
       deprecated 'better to construct a string yourself, use BoundingBox.ToString';
     function InfoManifoldAndBorderEdges: String;
       deprecated 'better to construct a string yourself, use EdgesCount';
+
+    { Is this scene detected as "whole scene is manifold",
+      so some shapes are not 2-manifold but whole scene is 2-manifold.
+      This is independent (doesn't take into account) the value
+      of @link(TCastleRenderOptions.WholeSceneManifold
+      RenderOptions.WholeSceneManifold). }
+    function InternalDetectedWholeSceneManifold(
+      const ForceRecalculation: Boolean = false): Boolean;
 
     { Edges count in the scene, for information purposes. }
     procedure EdgesCount(out ManifoldEdges, BorderEdges: Cardinal);
@@ -2423,7 +2438,7 @@ implementation
 
 uses Math, DateUtils,
   X3DCameraUtils, CastleStringUtils, CastleLog,
-  X3DLoad, CastleUriUtils, CastleQuaternions;
+  X3DLoad, CastleUriUtils, CastleQuaternions, CastleShapeInternalShadowVolumes;
 
 {$define read_implementation}
 {$I castlescenecore_collisions.inc}
@@ -3141,9 +3156,10 @@ begin
     There's no point in calling recursive UnregisterScene if the FRootNode
     will be freed right afterwards.
 
-    TODO: This optimization is actually not without a problem.
+    TODO: This optimization is problematic sometimes.
     If the RootNode has some child that has other parents (outside of this
-    scene, or with KeepExistingBegin) then they will remain existing,
+    scene) or uses TX3DNode.KeepExistingBegin or TX3DNode.WaitForRelease
+    then they will remain existing,
     and will have a dangling reference to this Scene.
     This happened with internal TAppearanceNode in CastleTerrain at one point.
 
@@ -3157,6 +3173,10 @@ begin
       FreeAndNil(Scene);
 
     ... then OldMaterial will have invalid reference in OldMaterial.Scene.
+
+    The workaround right now is to use TX3DNode.UnregisterScene when
+    this can happen. But it's an additional trap to think about when
+    managing memory of X3D nodes.
   }
   if (FRootNode <> nil) and (not FOwnsRootNode) then
     FRootNode.UnregisterScene;
@@ -3239,7 +3259,6 @@ procedure TCastleSceneCore.Load(const AUrl: String; const AOptions: TSceneLoadOp
 var
   TimeStart: TCastleProfilerTime;
   NewRoot, NewRootCacheOrigin: TX3DRootNode;
-  C: TCastleCollider;
 begin
   TimeStart := Profiler.Start('Loading "' + UriDisplay(AUrl) + '" (TCastleSceneCore)');
   try
@@ -3303,9 +3322,8 @@ begin
       - update triangles used by TCastleMeshCollider (note that this code
         will only update TCastleMeshCollider that is our behavior,
         it doesn't notify TCastleMeshCollider instances elsewhere that may refer to us). }
-    C := FindBehavior(TCastleCollider) as TCastleCollider;
-    if C <> nil then
-      C.InternalTransformChanged(Self);
+    if Collider <> nil then
+      Collider.InternalTransformChanged(Self);
   finally Profiler.Stop(TimeStart) end;
 end;
 
@@ -3641,7 +3659,6 @@ function TChangedAllTraverser.Traverse(
     ChildNode: TX3DNode;
     ChildGroup: TShapeTreeGroup;
     I: Integer;
-    CameraLocalPosition: TVector3;
   begin
     LODTree := TShapeTreeLOD.Create(ParentScene);
     LODTree.LODNode := LODNode;
@@ -3656,9 +3673,11 @@ function TChangedAllTraverser.Traverse(
     for I := 0 to LODNode.FdChildren.Count - 1 do
       LODTree.Children.Add(TShapeTreeGroup.Create(ParentScene));
 
+    { No point in calling UpdateLODLevel here, it will be called
+      from BeforeRender anyway.
     if ParentScene.ProcessEvents and
        ParentScene.GetCameraLocal(CameraLocalPosition) then
-      ParentScene.UpdateLODLevel(LODTree, CameraLocalPosition);
+      ParentScene.UpdateLODLevel(LODTree, CameraLocalPosition); }
 
     for I := 0 to LODNode.FdChildren.Count - 1 do
     begin
@@ -3834,45 +3853,6 @@ begin
   end;
 end;
 
-procedure TCastleSceneCore.UpdateLODLevel(const LODTree: TShapeTreeLOD;
-  const CameraLocalPosition: TVector3);
-var
-  OldLevel, NewLevel: Cardinal;
-begin
-  Assert(ProcessEvents);
-
-  OldLevel := LODTree.Level;
-  NewLevel := LODTree.CalculateLevel(CameraLocalPosition);
-  LODTree.Level := NewLevel;
-
-  if ( (OldLevel <> NewLevel) or
-       (not LODTree.WasLevel_ChangedSend) ) and
-     { If LODTree.Children.Count = 0, then Level = 0, but we don't
-       want to send Level_Changed since the children 0 doesn't really exist. }
-     (LODTree.Children.Count <> 0) then
-  begin
-    LODTree.WasLevel_ChangedSend := true;
-    LODTree.LODNode.EventLevel_Changed.Send(Integer(NewLevel), NextEventTime);
-  end;
-
-  if OldLevel <> NewLevel then
-  begin
-    { This means that active shapes changed, so we have to change things
-      depending on them. Just like after Switch.whichChoice change. }
-
-    Validities := Validities - [
-      { Calculation traverses over active shapes. }
-      fvShapesActiveCount,
-      fvShapesActiveVisibleCount,
-      { Calculation traverses over active nodes (uses RootNode.Traverse). }
-      fvMainLightForShadows];
-
-    DoGeometryChanged(gcActiveShapesChanged, nil);
-
-    InternalIncShapesHash; // TShapeTreeLOD returns now different things
-  end;
-end;
-
 procedure TCastleSceneCore.BeforeNodesFree(const InternalChangedAll: boolean);
 begin
   // paranoid check is the World valid before accessing it
@@ -3940,7 +3920,13 @@ procedure TCastleSceneCore.ChangedAllEnumerateCallback(Node: TX3DNode);
 begin
   if (Node.Scene <> nil) and
      (Node.Scene <> Self) and
-     (not InternalNodeSharing) then
+     (not InternalNodeSharing) and
+     { We need to check both Self and Node.Scene for InternalNodeSharing flag,
+       since updates may happen in both scenes.
+       Testcase: https://github.com/castle-engine/castle-model-viewer/issues/109
+       when "Silhouette and Border Edges" visualization was doing ChangedAll
+       on Scene every frame. }
+     (not TCastleSceneCore(Node.Scene).InternalNodeSharing) then
     WritelnWarning('X3D node %s is already part of another TCastleScene instance.' + ' You cannot use the same X3D node in multiple instances of TCastleScene. Instead you must copy the node, using "Node.DeepCopy". It is usually most comfortable to copy the entire scene, using "TCastleScene.Clone".',
       [Node.NiceName]);
   Node.Scene := Self;
@@ -4141,10 +4127,26 @@ begin
     ViewpointStack.EndChangesSchedule;
   end;
 
-  if ScheduledShadowMapsProcessing then
+  { 1. We honor ScheduledShadowMapsProcessing, to detect if shadow maps are maybe
+      used. Because at the beginning, UsesShadowMaps are always @false.
+      Also UsesShadowMaps are always @false if ShadowMaps have been toggled
+      to @false.
+
+    2. We also honor UsesShadowMaps. Because it shadow maps have been detected
+      in the last ProcessShadowMapsReceivers call, then every ChangedAll
+      should rebuild TShape.InternalShadowMaps, as we have recreated all TShape.
+
+      Testcase:
+      - fps_game shadow maps,
+      - or load model with shadow maps in castle-model-viewer, and do
+        "Edit -> Remove Placeholders from CGE levels".
+      Shadows *should not* disappear. }
+  if ScheduledShadowMapsProcessing or UsesShadowMaps then
   begin
     ProcessShadowMapsReceivers(RootNode, Shapes, ShadowMaps,
-      ShadowMapsDefaultSize);
+      ShadowMapsDefaultSize, UsesShadowMaps);
+    if UsesShadowMaps then
+      WritelnLog('Scene %s (%s) is using shadow maps', [Name, UriDisplay(Url)]);
     ScheduledShadowMapsProcessing := false;
   end;
 
@@ -4328,7 +4330,6 @@ function TTransformChangeHelper.TransformChangeTraverse(
     ShapeLOD: TShapeTreeLOD;
     OldShapes: PShapesParentInfo;
     NewShapes: TShapesParentInfo;
-    CameraLocalPosition: TVector3;
   begin
     { get Shape and increase Shapes^.Index }
     ShapeLOD := Shapes^.Group.Children[Shapes^.Index] as TShapeTreeLOD;
@@ -4339,9 +4340,12 @@ function TTransformChangeHelper.TransformChangeTraverse(
     if Inside then
     begin
       ShapeLOD.LODInverseTransform^ := StateStack.Top.Transformation.InverseTransform;
+      { No point in calling UpdateLODLevel here, it will be called
+        from BeforeRender anyway.
       if ParentScene.ProcessEvents and
          ParentScene.GetCameraLocal(CameraLocalPosition) then
         ParentScene.UpdateLODLevel(ShapeLOD, CameraLocalPosition);
+      }
     end;
 
     OldShapes := Shapes;
@@ -6821,9 +6825,6 @@ procedure TCastleSceneCore.InternalCameraChanged;
   begin
     Assert(ProcessEvents);
 
-    for I := 0 to ShapeLODs.Count - 1 do
-      UpdateLODLevel(TShapeTreeLOD(ShapeLODs.Items[I]), CameraVectors.Translation);
-
     for I := 0 to ProximitySensors.Count - 1 do
       ProximitySensorUpdate(ProximitySensors[I], CameraVectors);
 
@@ -7646,6 +7647,51 @@ begin
     HeadlightOn := DefaultNavigationInfoHeadlight;
 end;
 
+function TCastleSceneCore.InternalDetectedWholeSceneManifold(
+  const ForceRecalculation: Boolean): Boolean;
+
+  { Do CalculateDetectedWholeSceneManifold, measure time. }
+  procedure CalculateDetectedWholeSceneManifoldTime;
+  var
+    T: TTimerResult;
+    ProfilerTime: TCastleProfilerTime;
+    ElapsedTime: TFloatTime;
+  begin
+    T := Timer;
+    ProfilerTime := Profiler.Start(Format('Calculate DetectedWholeSceneManifold "%s" (%s)', [
+      Name,
+      UriDisplay(Url)
+    ]));
+
+    FDetectedWholeSceneManifold :=
+      CalculateDetectedWholeSceneManifold(Shapes.TraverseList(false));
+
+    Profiler.Stop(ProfilerTime);
+
+    ElapsedTime := T.ElapsedTime;
+    if ElapsedTime > 0.1 then
+    begin
+      WritelnLog('Auto-detecting WholeSceneManifold on scene %s %s took %f seconds.', [
+        Name,
+        UriDisplay(Url),
+        ElapsedTime
+      ]);
+      if FDetectedWholeSceneManifold then
+        WritelnLog('  Moreover, the detection was successfull. Consider setting RenderOptions.WholeSceneManifold to skip this detection in the future.');
+    end;
+  end;
+
+begin
+  if ForceRecalculation then
+    Exclude(Validities, fvDetectedWholeSceneManifold);
+  if not (fvDetectedWholeSceneManifold in Validities) then
+  begin
+    CalculateDetectedWholeSceneManifoldTime;
+    Include(Validities, fvDetectedWholeSceneManifold);
+  end;
+  Result := FDetectedWholeSceneManifold;
+end;
+
 procedure TCastleSceneCore.PrepareResources(const Options: TPrepareResourcesOptions;
   const Params: TPrepareParams);
 
@@ -8339,6 +8385,60 @@ end;
 
 procedure TCastleSceneCore.LocalRender(const Params: TRenderParams);
 
+  { Update LOD (level of detail) instances,
+
+    - Iterates over ShapeLODs,
+      - calling TShapeTreeLOD.UpdateLODLevel on all of them,
+      - changing TShapeTreeLOD.Level when needed,
+      - if ProcessEvents: sends X3D events when TShapeTreeLOD.Level changes.
+
+    This is done before every rendering,
+    not only from TCastleSceneCore.InternalCameraChanged.
+    This way:
+
+    - LOD level (displayed) is updated regardless of ProcessEvents.
+
+    - LOD level is updated before each render, which matters if
+      we use multiple times the same TCastleScene,
+      like through TCastleTransformReference.
+  }
+  procedure UpdateLods;
+
+    { Update one TShapeTreeLOD.
+      - Calculate and update TShapeTreeLOD.Level.
+      - Sends level_changed when needed (if ProcessEvents). }
+    procedure UpdateLod(const LODTree: TShapeTreeLOD;
+      const LocalCameraPosition: TVector3);
+    begin
+      if LODTree.UpdateLevel(LocalCameraPosition, ProcessEvents) then
+      begin
+        { This means that active shapes changed, so we have to change things
+          depending on them. Just like after Switch.whichChoice change. }
+
+        Validities := Validities - [
+          { Calculation traverses over active shapes. }
+          fvShapesActiveCount,
+          fvShapesActiveVisibleCount,
+          { Calculation traverses over active nodes (uses RootNode.Traverse). }
+          fvMainLightForShadows];
+
+        DoGeometryChanged(gcActiveShapesChanged, nil);
+
+        InternalIncShapesHash; // TShapeTreeLOD returns now different things
+      end;
+    end;
+
+  var
+    I: Integer;
+    LocalCameraPosition: TVector3;
+  begin
+    if ShapeLODs.Count = 0 then // optimize common case
+      Exit;
+    LocalCameraPosition := Params.LocalCameraPosition;
+    for I := 0 to ShapeLODs.Count - 1 do
+      UpdateLod(TShapeTreeLOD(ShapeLODs.Items[I]), LocalCameraPosition);
+  end;
+
   procedure RenderingCameraChanged(const RenderingCamera: TRenderingCamera);
   var
     Viewpoint: TAbstractViewpointNode;
@@ -8375,6 +8475,7 @@ procedure TCastleSceneCore.LocalRender(const Params: TRenderParams);
 
 begin
   inherited;
+  UpdateLods;
   RenderingCameraChanged(Params.RenderingCamera);
 end;
 

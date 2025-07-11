@@ -1,5 +1,5 @@
 {
-  Copyright 2010-2024 Michalis Kamburelis.
+  Copyright 2010-2025 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -87,6 +87,7 @@ type
   {$I castlerendererinternalshader_mirrorplane.inc}
   {$I castlerendererinternalshader_surfacetexture.inc}
   {$I castlerendererinternalshader_bumpmapping.inc}
+  {$I castlerendererinternalshader_shaderlibraries.inc}
 
   { GLSL program integrated with VRML/X3D and TShader.
     Allows to bind uniform values from VRML/X3D fields,
@@ -300,6 +301,7 @@ type
     HasGeometryMain: boolean;
     TextureMatrix: TCardinalList;
     NeedsCameraInverseMatrix: Boolean;
+    FShaderLibraries: TShaderLibraries;
     NeedsMirrorPlaneTexCoords: Boolean;
     NeedsNormalsForTexGen: Boolean;
     FPhongShading: boolean;
@@ -334,12 +336,27 @@ type
 
     FClipPlaneAlgorithm: TClipPlaneAlgorithm;
 
-    procedure EnableEffects(Effects: TMFNode;
+    { Link Effect nodes GLSL code in the shader.
+      This is only called once we link the shader,
+      so it's not called every frame, if we reuse existing shader.
+
+      So it cannot usefully modify CodeHash or set variables that
+      are accessed by SetDynamicUniforms (executed in each frame the shader
+      is used). }
+    procedure EffectsGenerateCode(Effects: TMFNode;
       const Code: TShaderSource = nil;
       const ForwardDeclareInFinalShader: boolean = false); overload;
-    procedure EnableEffects(Effects: TX3DNodeList;
+    procedure EffectsGenerateCode(Effects: TX3DNodeList;
       const Code: TShaderSource = nil;
       const ForwardDeclareInFinalShader: boolean = false); overload;
+
+    { Enable TEffectNode.FdShaderLibraries in all given Effect nodes.
+
+      This is called every frame we use the shader (not only when we link it).
+      So it can sensibly
+      - set variables that are accessed by SetDynamicUniforms, like ShaderLibraries
+      - modify CodeHash. }
+    procedure EnableShaderLibraries(const Effects: TX3DNodeList);
 
     { Special form of Plug. It inserts the PlugValue source code directly
       at the position of given plug comment (no function call
@@ -371,7 +388,8 @@ type
       in many cases, we will not need to call it (so we don't need to recalculate
       TShape.LocalBoundingBox every frame for a changing shape).
 
-      Should return bbox in scene coordinate system (not in world coordinate system).
+      Should return bbox in scene coordinate system (not in world coordinate
+      system, we will convert it if necessary to world using SceneTransform).
 
       Use ShapeBoundingBoxInWorld to get the box easily. }
     ShapeBoundingBoxInSceneEvent: TBoundingBoxEvent;
@@ -386,8 +404,14 @@ type
       so it's different than SceneModelView. }
     SceneModelView: TMatrix4;
 
-    { Scene transformation (without the shape transformation). }
+    { Scene transformation, to change things in scene coordinates
+      into world coordinates
+      (so, this is without any shape transformation, only TCastleTransform
+      transformations accumulated). }
     SceneTransform: TMatrix4;
+
+    { See @link(TCollectedShape.SceneTransformDynamic). }
+    SceneTransformDynamic: Boolean;
 
     { Assign this if you used EnableTexGen with tgMirrorPlane
       to setup correct uniforms. }
@@ -557,6 +581,16 @@ type
     { Current shape bbox, in world coordinates. }
     function ShapeBoundingBoxInWorld: TBox3D;
 
+    { Is ShapeBoundingBoxInWorld value for this TShape likely to change often.
+      One reason for this is that SceneTransform changes often,
+      and so this is right now just alias to SceneTransformDynamic.
+      This may guide shader generation, to avoid recreating shader when merely
+      the SceneTransform changes.
+
+      @seealso TCollectedShape.SceneTransformDynamic }
+    property ShapeBoundingBoxInWorldDynamic: Boolean read
+      SceneTransformDynamic;
+
     { Is alpha testing enabled by EnableAlphaTest. }
     property AlphaTest: Boolean read FAlphaTest;
   end;
@@ -590,6 +624,7 @@ uses SysUtils, StrUtils,
 {$I castlerendererinternalshader_mirrorplane.inc}
 {$I castlerendererinternalshader_surfacetexture.inc}
 {$I castlerendererinternalshader_bumpmapping.inc}
+{$I castlerendererinternalshader_shaderlibraries.inc}
 
 {$ifndef OpenGLES}
 var
@@ -1240,10 +1275,12 @@ begin
   FPhongShading := false;
   ShapeBoundingBoxInSceneEvent := nil;
   FShapeBoundingBoxInWorldKnown := false;
+  SceneTransformDynamic := false;
   Material := nil;
   DynamicUniforms.Count := 0;
   TextureMatrix.Count := 0;
   NeedsCameraInverseMatrix := false;
+  FShaderLibraries.Clear;
   NeedsMirrorPlaneTexCoords := false;
   NeedsNormalsForTexGen := false;
   RenderingCamera := nil;
@@ -1449,20 +1486,20 @@ begin
   {$endif}
 end;
 
-procedure TShader.EnableEffects(Effects: TMFNode;
+procedure TShader.EffectsGenerateCode(Effects: TMFNode;
   const Code: TShaderSource;
   const ForwardDeclareInFinalShader: boolean);
 begin
-  EnableEffects(Effects.InternalItems, Code, ForwardDeclareInFinalShader);
+  EffectsGenerateCode(Effects.InternalItems, Code, ForwardDeclareInFinalShader);
 end;
 
-procedure TShader.EnableEffects(Effects: TX3DNodeList;
+procedure TShader.EffectsGenerateCode(Effects: TX3DNodeList;
   const Code: TShaderSource;
   const ForwardDeclareInFinalShader: boolean);
 
-  procedure EnableEffect(Effect: TEffectNode);
+  procedure ProcessEffect(Effect: TEffectNode);
 
-    procedure EnableEffectPart(Part: TEffectPartNode);
+    procedure ProcessEffectPart(Part: TEffectPartNode);
     var
       Contents: String;
     begin
@@ -1470,8 +1507,10 @@ procedure TShader.EnableEffects(Effects: TX3DNodeList;
       if Contents <> '' then
       begin
         Plug(Part.ShaderType, Contents, Code, ForwardDeclareInFinalShader);
-        { Right now, for speed, we do not call EnableEffects, or even Plug,
-          before LinkProgram. At which point ShapeRequiresShaders
+        { EffectsGenerateCode or even Plug are only calld from LinkProgram,
+          not earlier (so not when shader hash is possibly calculated
+          and maybe we will only reuse existing shader program).
+          And from LinkProgram the ShapeRequiresShaders
           is already known true. }
         Assert(ShapeRequiresShaders);
       end;
@@ -1491,7 +1530,7 @@ procedure TShader.EnableEffects(Effects: TX3DNodeList;
 
     for I := 0 to Effect.FdParts.Count - 1 do
       if Effect.FdParts[I] is TEffectPartNode then
-        EnableEffectPart(TEffectPartNode(Effect.FdParts[I]));
+        ProcessEffectPart(TEffectPartNode(Effect.FdParts[I]));
 
     UniformsNodes.Add(Effect);
   end;
@@ -1501,7 +1540,44 @@ var
 begin
   for I := 0 to Effects.Count - 1 do
     if Effects[I] is TEffectNode then
-      EnableEffect(TEffectNode(Effects[I]));
+      ProcessEffect(TEffectNode(Effects[I]));
+end;
+
+procedure TShader.EnableShaderLibraries(const Effects: TX3DNodeList);
+
+  { Enable given shader library. }
+  procedure EnableShaderLibrary(const ShaderLibrary: String);
+  { For now, this assumes we only accept 'castle-shader:/EyeWorldSpace.glsl'.
+    We will extend it if we need more shader libraries in the future. }
+  begin
+    if ShaderLibrary <> 'castle-shader:/EyeWorldSpace.glsl' then
+    begin
+      WritelnWarning(Format('Unknown shader library "%s" for Effect node. Only "castle-shader:/EyeWorldSpace.glsl" is supported now.', [
+        ShaderLibrary
+      ]));
+      Exit;
+    end;
+
+    FShaderLibraries.EnableAndPrepareHash(slEyeWorldSpace, FCodeHash);
+  end;
+
+  { Enable shader libraries needed by given Effect, if it is enabled. }
+  procedure ProcessEffectNode(Effect: TEffectNode);
+  var
+    I: Integer;
+  begin
+    if not Effect.FdEnabled.Value then Exit;
+
+    for I := 0 to Effect.FdShaderLibraries.Count - 1 do
+      EnableShaderLibrary(Effect.FdShaderLibraries.Items[I]);
+  end;
+
+var
+  I: Integer;
+begin
+  for I := 0 to Effects.Count - 1 do
+    if Effects[I] is TEffectNode then
+      ProcessEffectNode(TEffectNode(Effects[I]));
 end;
 
 procedure TShader.LinkProgram(AProgram: TX3DShaderProgram;
@@ -1786,8 +1862,8 @@ const
         to *not* integrate our texture handling with ComposedShader.
 
         We also remove uniform values for textures, to avoid
-        "unused castle_texture_%d" warning. Setting TextureUniformsSet
-        will make it happen. }
+        "unused castle_texture_%d" warning. Setting TextureUniformsSet:=false
+        will avoid setting texture uniforms. }
       TextureUniformsSet := false;
     end;
 
@@ -1975,8 +2051,11 @@ var
       for I := 0 to TextureShaders.Count - 1 do
         if (TextureShaders[I] is TTextureShader) and
            (TTextureShader(TextureShaders[I]).UniformName <> '') then
-          AProgram.SetUniform(TTextureShader(TextureShaders[I]).UniformName,
-                              TTextureShader(TextureShaders[I]).UniformValue);
+        begin
+          AProgram.SetUniform(
+            TTextureShader(TextureShaders[I]).UniformName,
+            TTextureShader(TextureShaders[I]).UniformValue);
+        end;
     end;
 
     FBumpMappingShader.SetUniformsOnce(AProgram);
@@ -2027,9 +2106,15 @@ begin
   FSurfaceTextureShaders.GenerateCode(Self);
   EnableShaderFog;
   if AppearanceEffects <> nil then
-    EnableEffects(AppearanceEffects);
+    EffectsGenerateCode(AppearanceEffects);
   if GroupEffects <> nil then
-    EnableEffects(GroupEffects);
+    EffectsGenerateCode(GroupEffects);
+  { Do FShaderLibraries.GenerateCode after EffectsGenerateCode,
+    to make routines defined later in GLSL in case of OpenGLES
+    (no separate compilation units).
+    This makes forward definitions of routines sensible both with and without
+    separate compilation units. }
+  FShaderLibraries.GenerateCode(Self);
   EnableMirrorPlaneTexCoords;
 
   if HasGeometryMain then
@@ -2080,9 +2165,19 @@ begin
       raise EGLSLError.Create('No vertex and no fragment shader for GLSL program');
 
     for ShaderType := Low(ShaderType) to High(ShaderType) do
+    begin
       AProgram.AttachShader(ShaderType, Source[ShaderType]);
+      {$ifdef CASTLE_CANNOT_CATCH_EXCEPTIONS}
+      if AProgram.ErrorOnCompileLink then Exit;
+      {$endif}
+    end;
+
     AProgram.Name := 'TShader:Shape:' + ShapeNiceName;
     AProgram.Link;
+
+    {$ifdef CASTLE_CANNOT_CATCH_EXCEPTIONS}
+    if AProgram.ErrorOnCompileLink then Exit;
+    {$endif}
 
     if SelectedNode <> nil then
       SelectedNode.EventIsValid.Send(true);
@@ -2657,6 +2752,7 @@ begin
   if AppearanceEffects.Count <> 0 then
   begin
     ShapeRequiresShaders := true;
+    EnableShaderLibraries(AppearanceEffects.InternalItems);
     FCodeHash.AddEffects(AppearanceEffects);
   end;
 end;
@@ -2667,6 +2763,7 @@ begin
   if GroupEffects.Count <> 0 then
   begin
     ShapeRequiresShaders := true;
+    EnableShaderLibraries(GroupEffects);
     FCodeHash.AddEffects(GroupEffects);
   end;
 end;
@@ -2707,11 +2804,14 @@ begin
   for I := 0 to DynamicUniforms.Count - 1 do
     DynamicUniforms[I].SetUniform(AProgram);
 
-  if NeedsCameraInverseMatrix then
+  if NeedsCameraInverseMatrix or
+     (slEyeWorldSpace in FShaderLibraries.Enabled) then
   begin
     RenderingCamera.InverseMatrixNeeded;
     AProgram.SetUniform('castle_CameraInverseMatrix', RenderingCamera.InverseMatrix);
   end;
+
+  FShaderLibraries.SetDynamicUniforms(AProgram, RenderingCamera);
 
   if NeedsMirrorPlaneTexCoords and (MirrorPlaneUniforms <> nil) then
     MirrorPlaneUniforms.SetDynamicUniforms(AProgram);

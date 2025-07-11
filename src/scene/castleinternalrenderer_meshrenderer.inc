@@ -398,7 +398,7 @@ begin
 
         if Arrays.HasTangent then
         begin
-          CurrentMeshShader.AttributeCastle_Tangent.EnableArrayVector3(Vao, Arrays.CoordinateSize, PtrUInt(Arrays.Tangent));
+          CurrentMeshShader.AttributeCastle_Tangent.EnableArrayVector4(Vao, Arrays.CoordinateSize, PtrUInt(Arrays.Tangent));
           Attribs.Add(CurrentMeshShader.AttributeCastle_Tangent);
         end;
       end else
@@ -1081,8 +1081,8 @@ begin
       CurrentMeshShader := nil;
   end;
 
+  RenderContext.CurrentProgram := CurrentMeshShader; // enable the CurrentMeshShader for OpenGL
+
   if CurrentMeshShader <> nil then
     CurrentMeshShader.SetupUniforms(BoundTextureUnits);
-
-  RenderContext.CurrentProgram := CurrentMeshShader; // enable the CurrentMeshShader for OpenGL
 end;

@@ -490,6 +490,11 @@ type
     @exclude }
   TDepthRange = (drFull, drNear, drFar);
 
+  { Primitive material type, used by
+    @link(TCastleAbstractPrimitive.Material) and
+    @link(TCastleImageTransform.Material). }
+  TPrimitiveMaterial = (pmPhysical, pmPhong, pmUnlit);
+
 const
   ShadowSamplingNames: array [TShadowSampling] of string =
   ( 'Simple', 'PCF 4', 'PCF 4 Bilinear', 'PCF 16', 'Variance Shadow Maps (Experimental)' );
@@ -609,7 +614,7 @@ var
 
     @orderedList(
       @item(You can define your own color processing using
-        our compositing shaders ( https://castle-engine.io/compositing_shaders.php ),
+        our shader effects ( https://castle-engine.io/shaders ),
         use PLUG_fragment_modify ( https://castle-engine.io/compositing_shaders_doc/html/section.fragment_plugs.html ).
         See https://github.com/castle-engine/demo-models/blob/master/compositing_shaders/tone_mapping.x3dv
         example.

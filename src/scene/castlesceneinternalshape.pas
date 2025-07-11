@@ -1,5 +1,5 @@
 {
-  Copyright 2003-2023 Michalis Kamburelis.
+  Copyright 2003-2025 Michalis Kamburelis.
 
   This file is part of "Castle Game Engine".
 
@@ -38,6 +38,7 @@ type
     procedure SchedulePrepareResources;
     function PrepareTexture(Shape: TShape; Texture: TAbstractTextureNode): Pointer;
     function UnprepareTexture(Shape: TShape; Texture: TAbstractTextureNode): Pointer;
+    procedure UnprepareAllTextures;
   public
     PassedFrustumAndDistanceCulling: Boolean;
 
@@ -67,13 +68,28 @@ type
   end;
 
   { Shape with additional information how to render it inside a world,
-    that allows to render it independently of the containing TCastleScene. }
+    that allows to render it independently of the containing TCastleScene.
+    Meaning of fields follows the TShapesCollector.Add parameters. }
   TCollectedShape = class
     Shape: TGLShape;
     RenderOptions: TCastleRenderOptions;
     SceneTransform: TMatrix4;
+
+    { An optimization hint, if @true it implies
+      that SceneTransform for this Shape may change often,
+      it may even change within the same frame (when the TCastleTransform
+      is used many times in TAbstractRootTransform graph, e.g. through
+      TCastleTransformReference).
+
+      Value @true disables optimizations that try to assume the shape remains
+      roughly in the same place, like using InsideLightRadius
+      in TLightsRenderer.Render to eliminate lights from the shader code
+      when the shape is outside of the light radius. }
+    SceneTransformDynamic: Boolean;
+
     DepthRange: TDepthRange;
     ShadowVolumesReceiver: Boolean;
+
     { Should rendering this use blending (to account for partial transparency). }
     function UseBlending: Boolean;
   end;
@@ -196,15 +212,27 @@ begin
        chFontStyleFontChanged
      ] <> [] then
   begin
-    TTextureResources.Unprepare(State.MainTexture);
     { Make next PrepareResources prepare all textures.
-      Testcase:
+
+      Testcase 1:
       - castle-model-viewer
       - open demo-models/rendered_texture/rendered_texture_tweak_size.x3dv
       - use s / S
       - without this fix, texture would change to none, and never again
-        update RenderedTexture contents. }
-    TexturesPrepared := false;
+        update RenderedTexture contents.
+
+      Testcase 2, showing we need to unprepare *all* textures,
+      not only e.g. State.MainTexture:
+      - Use TCastleImageTransform with both Texture and TextureNormalMap,
+        Repeat = 1 1
+      - Change Repeat to 100 100 (changes boundaryModeS/T on TTexturePropertiesNode,
+        which should eventually call chTextureRendererProperties
+        on all shapes using the associated texture).
+      - Without unpreparing all (if we would e.g. unprepare only
+        State.MainTexture), we would see wrong lighting, as normalmap
+        would use clamp instead of repeat.
+    }
+    UnprepareAllTextures;
     { Make sure PrepareResources is actually called soon. }
     SchedulePrepareResources;
   end;
@@ -259,6 +287,15 @@ begin
   end;
 end;
 
+procedure TGLShape.UnprepareAllTextures;
+begin
+  if TexturesPrepared then
+  begin
+    TexturesPrepared := false;
+    EnumerateTextures({$ifdef FPC}@{$endif} UnprepareTexture);
+  end;
+end;
+
 procedure TGLShape.GLContextClose;
 
   { Free Arrays and Vbo of all shapes. }
@@ -281,12 +318,7 @@ procedure TGLShape.GLContextClose;
   end;
 
 begin
-  if TexturesPrepared then
-  begin
-    TexturesPrepared := false;
-    EnumerateTextures({$ifdef FPC}@{$endif} UnprepareTexture);
-  end;
-
+  UnprepareAllTextures;
   FreeCaches;
   FreeQuery(OcclusionQueryId);
 end;

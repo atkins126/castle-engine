@@ -91,8 +91,15 @@
   {$ifdef CPUX86} {$define cpu386} {$define cpui386} {$endif}
   {$ifdef CPUARM64} {$define CPUAARCH64} {$endif}
 
-  { Define in Delphi UNIX when LINUX, like FPC does. }
+  { Define Darwin for a common Apple OS in macOS, iOS etc.
+    See https://en.wikipedia.org/wiki/Darwin_(operating_system).
+    Compatible with FPC. }
+  {$ifdef MACOS} {$define DARWIN} {$endif}
+
+  { Define in Delphi UNIX when LINUX or other UNIXes are, like FPC does. }
   {$ifdef LINUX} {$define UNIX} {$endif}
+  {$ifdef ANDROID} {$define UNIX} {$endif}
+  {$ifdef DARWIN} {$define UNIX} {$endif}
 {$endif}
 
 { Traditionally, CGE defined CPUARM64 also for 64-bit iOS.
@@ -217,11 +224,17 @@
   https://gitlab.com/freepascal.org/fpc/source/-/commit/693491048bf2c6f9122a0d8b044ad0e55382354d }
 {$ifdef VER3_0} {$define GENERICS_CONSTREF} {$endif}
 {$ifdef VER3_2} {$define GENERICS_CONSTREF} {$endif}
-{$if defined(VER3_2_3)}
+{$if defined(VER3_2_3) or
+     defined(VER3_2_4) or
+     defined(VER3_2_5) or
+     defined(VER3_2_6)}
   { FPC 3.2.3 (fixes_3_2 branch, as of 2023-12-23) no longer uses "constref".
     Confirmed on Linux/Arm32, Linux/Arm64(Aarch64), Linux/x86_64,
     see also sources:
-    https://gitlab.com/freepascal.org/fpc/source/-/blob/fixes_3_2/packages/rtl-generics/src/generics.collections.pas?ref_type=heads. }
+    https://gitlab.com/freepascal.org/fpc/source/-/blob/fixes_3_2/packages/rtl-generics/src/generics.collections.pas?ref_type=heads.
+
+    2025-06-24, testing FPC 3.2.4 release candidate, it also doesn't use
+    "constref" in Generics.Collections. }
   {$undef GENERICS_CONSTREF}
 {$endif}
 
@@ -608,9 +621,17 @@
 
 {$ifdef WASI}
   {$undef HAS_FP_HTTP_CLIENT}
-  {$undef USE_VAMPYRE_IMAGING} // Vampyre Imaging doesn't work with WASI
   // CastleDynLibs on WASI not tested
   {$undef ALLOW_DLOPEN_FROM_UNIT_INITIALIZATION}
+  { Web target doesn't support try..except, so we report some errors
+    without causing exceptions in this case. }
+  {$define CASTLE_CANNOT_CATCH_EXCEPTIONS}
+
+  // LibPng, from dynamic or static library, not supported.
+  // Undefining the 2 symbols below simply avoids 2 warnings at runtime
+  // from WarningNoLibPng, nothing more.
+  {$undef CASTLE_PNG_DYNAMIC}
+  {$undef CASTLE_PNG_STATIC}
 {$endif}
 
 { Workaround ParamStr issue -------------------------------------------------- }
@@ -628,3 +649,37 @@
 {.$define CASTLE_ANDROID_ARGV_LOGGING}
 
 {$endif not CASTLE_CONF_INCLUDED}
+
+{ Model formats support ------------------------------------------------------
+  Disable support for some model formats to make the exe smaller.
+
+  Note: Don't define these symbols in castleconf.inc,
+  as this would mean you need to maintain your CGE modification,
+  and it affects all projects (including CGE examples that may rely on specific
+  formats).
+
+  Rather, define these symbols in your project, e.g. using <defines> in the
+  CastleEngineManifest.xml.
+  See https://castle-engine.io/project_manifest#_compiler_options_and_paths .
+  Like:
+
+  <compiler_options>
+    <defines>
+      <define>CASTLE_COLLADA_SUPPORT_DISABLE</define>
+      <define>CASTLE_IFC_SUPPORT_DISABLE</define>
+    </defines>
+  </compiler_options>
+}
+{$ifdef CASTLE_GEO_SUPPORT_DISABLE}{$INFO 'GEO support disabled'}{$endif}
+{$ifdef CASTLE_OBJ_SUPPORT_DISABLE}{$INFO 'OBJ support disabled'}{$endif}
+{$ifdef CASTLE_COLLADA_SUPPORT_DISABLE}{$INFO 'COLLADA support disabled'}{$endif}
+{$ifdef CASTLE_SPINE_SUPPORT_DISABLE}{$INFO 'SPINE support disabled'}{$endif}
+{$ifdef CASTLE_STL_SUPPORT_DISABLE}{$INFO 'STL support disabled'}{$endif}
+{$ifdef CASTLE_MD3_SUPPORT_DISABLE}{$INFO 'MD3 support disabled'}{$endif}
+{$ifdef CASTLE_GLTF_SUPPORT_DISABLE}{$INFO 'GLTF support disabled'}{$endif}
+{$ifdef CASTLE_IMAGE_SUPPORT_DISABLE}{$INFO 'IMAGE support disabled'}{$endif}
+{$ifdef CASTLE_COCOS2D_SUPPORT_DISABLE}{$INFO 'COCOS2D support disabled'}{$endif}
+{$ifdef CASTLE_SPRITESHEET_SUPPORT_DISABLE}{$INFO 'SPRITESHEET support disabled'}{$endif}
+{$ifdef CASTLE_TILED_MAP_SUPPORT_DISABLE}{$INFO 'TILED_MAP support disabled'}{$endif}
+{$ifdef CASTLE_IFC_SUPPORT_DISABLE}{$INFO 'IFC support disabled'}{$endif}
+{$ifdef CASTLE_3DS_SUPPORT_DISABLE}{$INFO '3DS support disabled'}{$endif}
